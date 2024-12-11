@@ -509,13 +509,13 @@ def parse_date(date_str):
 
 
 def search_branch_request_on_success(response: dict) -> None:
-    for branch in response["data"]["bhfList"]:
+    for branch in response.get("results", []):
         doc = None
 
         try:
             doc = frappe.get_doc(
                 "Branch",
-                {"branch": branch["bhfId"]},
+                {"custom_slade_id": branch["id"]},
                 for_update=True,
             )
 
@@ -523,20 +523,22 @@ def search_branch_request_on_success(response: dict) -> None:
             doc = frappe.new_doc("Branch")
 
         finally:
-            doc.branch = branch["bhfId"]
-            doc.custom_branch_code = branch["bhfId"]
-            doc.custom_pin = branch["tin"]
-            doc.custom_branch_name = branch["bhfNm"]
-            doc.custom_branch_status_code = branch["bhfSttsCd"]
-            doc.custom_county_name = branch["prvncNm"]
-            doc.custom_sub_county_name = branch["dstrtNm"]
-            doc.custom_tax_locality_name = branch["sctrNm"]
-            doc.custom_location_description = branch["locDesc"]
-            doc.custom_manager_name = branch["mgrNm"]
-            doc.custom_manager_contact = branch["mgrTelNo"]
-            doc.custom_manager_email = branch["mgrEmail"]
-            doc.custom_is_head_office = branch["hqYn"]
-            doc.custom_is_etims_branch = 1
+            doc.branch = branch["id"]
+            doc.custom_slade_id = branch["id"]
+            doc.custom_etims_device_serial_no = branch["etims_device_serial_no"]            
+            doc.custom_branch_code = branch["etims_branch_id"]
+            doc.custom_pin = branch["organisation_tax_pin"]
+            doc.custom_branch_name = branch["name"]
+            doc.custom_branch_status_code = branch["branch_status"]
+            doc.custom_county_name = branch["county_name"]
+            doc.custom_sub_county_name = branch["sub_county_name"]
+            doc.custom_tax_locality_name = branch["tax_locality_name"]
+            doc.custom_location_description = branch["location_description"]
+            doc.custom_manager_name = branch["manager_name"]
+            doc.custom_manager_contact = branch["parent_phone_number"]
+            doc.custom_manager_email = branch["email_address"]
+            doc.custom_is_head_office = "Y" if branch["is_headquater"] else "N"
+            doc.custom_is_etims_branch = 1 if branch["is_etims_verified"] else 0
 
             doc.save()
 

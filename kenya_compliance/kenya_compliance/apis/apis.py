@@ -63,14 +63,15 @@ def process_request(request_data: str | dict, route_key: str, handler_function, 
         data = json.loads(request_data)
     elif isinstance(request_data, dict):
         data = request_data
-    company_name = data.get("company_name") 
+    company_name = data.get("company_name")  
+    branch_id = data.get("branch_id") or "00"
     document_name = data.get("document_name", None)
     if method == "GET":
         if document_name: data.pop("document_name") 
         if company_name: data.pop("company_name")
 
-    headers = build_slade_headers(company_name)
-    server_url = get_slade_server_url(company_name)
+    headers = build_slade_headers(company_name, branch_id)
+    server_url = get_slade_server_url(company_name, branch_id)
     route_path, _ = get_route_path(route_key, "VSCU Slade 360")
 
     if headers and server_url and route_path:
@@ -180,9 +181,7 @@ def perform_item_registration(item_name: str) -> dict | None:
 @frappe.whitelist()
 def send_insurance_details(request_data: str) -> None:
     data: dict = json.loads(request_data)
-
     company_name = data["company_name"]
-
     headers = build_headers(company_name)
     server_url = get_server_url(company_name)
     route_path, last_request_date = get_route_path("BhfInsuranceSaveReq")
@@ -350,7 +349,7 @@ def perform_import_item_search(request_data: str) -> None:
 def perform_import_item_search_all_branches() -> None:
     all_credentials = frappe.get_all(
         SETTINGS_DOCTYPE_NAME,
-        ["name", "bhfid", "communication_key", "tin", "company"],
+        ["name", "bhfid", "company"],
     )
 
     for credential in all_credentials:
@@ -431,30 +430,9 @@ def submit_inventory(request_data: str) -> None:
 
 @frappe.whitelist()
 def search_branch_request(request_data: str) -> None:
-    data: dict = json.loads(request_data)
-
-    company_name = data["company_name"]
-
-    headers = build_headers(company_name)
-    server_url = get_server_url(company_name)
-    route_path, last_request_date = get_route_path("BhfSearchReq")
-
-    if headers and server_url and route_path:
-        url = f"{server_url}{route_path}"
-
-        request_date = last_request_date.strftime("%Y%m%d%H%M%S")
-
-        payload = {"lastReqDt": "20240101000000"}
-
-        endpoints_builder.headers = headers
-        endpoints_builder.url = url
-        endpoints_builder.payload = payload
-        endpoints_builder.success_callback = search_branch_request_on_success
-        endpoints_builder.error_callback = on_error
-
-        endpoints_builder.make_remote_call(
-            doctype="Branch",
-        )
+    return process_request(
+        request_data, "BhfSearchReq", search_branch_request_on_success, doctype="Branch"
+    )
 
 
 @frappe.whitelist()
