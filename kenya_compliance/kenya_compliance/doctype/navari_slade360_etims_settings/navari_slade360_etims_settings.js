@@ -70,6 +70,54 @@ frappe.ui.form.on("Navari Slade360 eTims Settings", {
         __("eTims Actions")
       );
 
+      frm.add_custom_button(
+        __("Initialize device"),
+        function () {
+          frappe.call({
+            method: "frappe.client.get_value",
+            args: {
+              doctype: "Branch",
+              fieldname: "custom_branch_code",
+              filters: { name: frm.doc.bhfid },
+            },
+            callback: function (res) {
+              if (res.message) {
+                const custom_branch_code = res.message.custom_branch_code;
+
+                frappe.call({
+                  method:
+                    "kenya_compliance.kenya_compliance.apis.apis.initialize_device",
+                  args: {
+                    request_data: {
+                      document_name: frm.doc.name,
+                      etims_branch_id: custom_branch_code,
+                      username: frm.doc.auth_username,
+                      password: frm.doc.auth_password,
+                      vscu_url: frm.doc.server_url,
+                      etims_web_address:
+                        "https://etims-api-sbx.kra.go.ke/etims-api",
+                      organisation_tax_pin: frm.doc.tin,
+                      etims_device_serial_no: frm.doc.dvcsrlno,
+                      company_name: companyName,
+                      branch_id: frm.doc.bhfid,
+                    },
+                  },
+                  callback: (response) => {
+                    // console.log(response);
+                  },
+                  error: (error) => {
+                    // Error handling
+                  },
+                });
+              } else {
+                frappe.msgprint(__("Failed to fetch slade_id for the branch."));
+              }
+            },
+          });
+        },
+        __("eTims Actions")
+      );
+
       // frm.add_custom_button(
       //   __("Get Stock Movements"),
       //   function () {

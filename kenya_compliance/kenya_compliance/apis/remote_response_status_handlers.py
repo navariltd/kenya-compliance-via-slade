@@ -605,3 +605,9 @@ def item_search_on_success(response: dict, document_name: str):
 
     if counter % batch_size != 0:
         frappe.db.commit()
+
+
+def initialize_device_submission_on_success(
+    response: dict, document_name: str
+) -> None:
+    pass

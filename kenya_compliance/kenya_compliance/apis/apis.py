@@ -43,6 +43,7 @@ from .remote_response_status_handlers import (
     stock_mvt_search_on_success,
     submit_inventory_on_success,
     user_details_submission_on_success,
+    initialize_device_submission_on_success,
 )
 from ..background_tasks.tasks import (
     update_countries,
@@ -68,14 +69,15 @@ def process_request(request_data: str | dict, route_key: str, handler_function, 
     company_name = data.get("company_name")  
     branch_id = data.get("branch_id") or "00"
     document_name = data.get("document_name", None)
-    if method == "GET":
-        if document_name: data.pop("document_name") 
-        if company_name: data.pop("company_name")
 
     headers = build_slade_headers(company_name, branch_id)
     server_url = get_slade_server_url(company_name, branch_id)
     route_path, _ = get_route_path(route_key, "VSCU Slade 360")
 
+    if method == "GET":
+        if document_name: data.pop("document_name") 
+        if company_name: data.pop("company_name")
+        
     if headers and server_url and route_path:
         url = f"{server_url}{route_path}"
 
@@ -805,3 +807,9 @@ def create_stock_entry_from_stock_movement(request_data: str) -> None:
     stock_entry.save()
 
     frappe.msgprint(f"Stock Entry {stock_entry.name} created successfully")
+
+
+@frappe.whitelist()
+def initialize_device(request_data: str) -> None:
+    return process_request(request_data, "DeviceVerificationReq", initialize_device_submission_on_success, method="POST", doctype=SETTINGS_DOCTYPE_NAME)
+
