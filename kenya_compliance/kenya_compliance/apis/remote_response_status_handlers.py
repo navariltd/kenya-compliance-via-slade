@@ -23,7 +23,11 @@ from ..doctype.doctype_names_mapping import (
     USER_DOCTYPE_NAME,
 )
 from ..handlers import handle_errors, handle_slade_errors
-from ..utils import get_qr_code
+from ..utils import (
+    get_link_value,
+    get_or_create_link,
+    get_qr_code,
+)
 
 
 def on_error(
@@ -96,13 +100,13 @@ def customer_search_on_success(
     )
     
 
-def item_registration_on_success(response: dict) -> None:
+def item_registration_on_success(response: dict, document_name: str) -> None:
     updates = {
         "custom_item_registered": 1 if response.get("sent_to_etims") else 0,
         "custom_slade_id": response.get("id"),
         "custom_sent_to_slade": 1,
     }
-    frappe.db.set_value("Item", response.get("name"), updates)
+    frappe.db.set_value("Item", document_name, updates)
 
 
 def customer_insurance_details_submission_on_success(
@@ -121,7 +125,7 @@ def customer_branch_details_submission_on_success(
     frappe.db.set_value(
         "Customer",
         document_name,
-        {"custom_details_submitted_successfully": 1},
+        {"custom_details_submitted_successfully": 1, "slade_id": response.get("id")},
     )
 
 
@@ -210,7 +214,7 @@ def stock_mvt_submission_on_success(response: dict, document_name: str) -> None:
     )
 
 
-def purchase_search_on_success(reponse: dict) -> None:
+def purchase_search_on_success(reponse: dict, document_name: str) -> None:
     sales_list = reponse["data"]["saleList"]
 
     for sale in sales_list:
@@ -306,7 +310,7 @@ def create_and_link_purchase_item(item: dict, parent_record: str) -> None:
     registered_item.save()
 
 
-def notices_search_on_success(response: dict | list) -> None:
+def notices_search_on_success(response: dict | list, document_name: str) -> None:
     notices = response if isinstance(response, list) else response.get("results")
     if isinstance(notices, list):
         for notice in notices:
@@ -355,7 +359,7 @@ def create_notice_if_new(notice: dict) -> None:
         )
 
 
-def stock_mvt_search_on_success(response: dict) -> None:
+def stock_mvt_search_on_success(response: dict, document_name: str) -> None:
     stock_list = response["data"]["stockList"]
 
     for stock in stock_list:
@@ -400,7 +404,7 @@ def stock_mvt_search_on_success(response: dict) -> None:
         doc.save()
 
 
-def imported_items_search_on_success(response: dict):
+def imported_items_search_on_success(response: dict, document_name: str):
     items = response.get("results", [])
     batch_size = 20
     counter = 0
@@ -508,7 +512,7 @@ def parse_date(date_str):
     raise ValueError(f"Invalid date format: {date_str}")
 
 
-def search_branch_request_on_success(response: dict) -> None:
+def search_branch_request_on_success(response: dict, document_name: str) -> None:
     for branch in response.get("results", []):
         doc = None
 
@@ -543,7 +547,7 @@ def search_branch_request_on_success(response: dict) -> None:
             doc.save()
 
 
-def item_search_on_success(response: dict):
+def item_search_on_success(response: dict, document_name: str):
     items = response.get("results", [])
     batch_size = 20
     counter = 0
@@ -601,38 +605,3 @@ def item_search_on_success(response: dict):
 
     if counter % batch_size != 0:
         frappe.db.commit()
-
-
-def get_link_value(doctype: str, field_name: str, value: str):
-    try:
-        return frappe.db.get_value(doctype, {field_name: value}, "name")
-    except Exception as e:
-        frappe.log_error(
-            title=f"Error Fetching Link for {doctype}",
-            message=f"Error while fetching link for {doctype} with {field_name}={value}: {str(e)}",
-        )
-        return None
-    
-
-def get_or_create_link(doctype: str, field_name: str, value: str):
-    if not value:
-        return None
-    
-    try:
-        link_name = frappe.db.get_value(doctype, {field_name: value}, "name")
-        if not link_name:
-            link_name = frappe.get_doc({
-                "doctype": doctype,
-                field_name: value,
-                "code": value,
-            }).insert(ignore_permissions=True, ignore_mandatory=True).name
-            frappe.db.commit()
-        return link_name
-    except Exception as e:
-        frappe.log_error(
-            title=f"Error in get_or_create_link for {doctype}",
-            message=f"Error in {doctype} - {value}: {str(e)}",
-        )
-        return None
-
-

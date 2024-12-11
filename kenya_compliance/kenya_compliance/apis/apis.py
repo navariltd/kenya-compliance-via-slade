@@ -20,6 +20,7 @@ from ..utils import (
     build_datetime_from_string,
     build_headers,
     build_slade_headers,
+    get_link_value,
     get_slade_server_url,
     get_route_path,
     get_server_url,
@@ -45,6 +46,7 @@ from .remote_response_status_handlers import (
 )
 from ..background_tasks.tasks import (
     update_countries,
+    update_currencies,
     update_item_classification_codes,
     update_packaging_units,
     update_taxation_type,
@@ -220,49 +222,15 @@ def send_insurance_details(request_data: str) -> None:
 
 @frappe.whitelist()
 def send_branch_customer_details(request_data: str) -> None:
-    data: dict = json.loads(request_data)
+    data = json.loads(request_data)
+    phone_number = data.get("phone_number", "").replace(" ", "").strip()
+    data["phone_number"] = "+254" + phone_number[-9:] if len(phone_number) >= 9 else None
 
-    company_name = data["company_name"]
+    currency_name = data.get("currency")
+    if currency_name:
+        data["currency"] = frappe.get_value("Currency", currency_name, "slade_id")
 
-    headers = build_headers(company_name)
-    server_url = get_server_url(company_name)
-    route_path, last_request_date = get_route_path("BhfCustSaveReq")
-
-    if headers and server_url and route_path:
-        url = f"{server_url}{route_path}"
-        payload = {
-            "custNo": data["name"][:14],
-            "custTin": data["customer_pin"],
-            "custNm": data["customer_name"],
-            "adrs": None,
-            "telNo": None,
-            "email": None,
-            "faxNo": None,
-            "useYn": "Y",
-            "remark": None,
-            "regrNm": data["registration_id"],
-            "regrId": split_user_email(data["registration_id"]),
-            "modrNm": data["modifier_id"],
-            "modrId": split_user_email(data["modifier_id"]),
-        }
-
-        endpoints_builder.headers = headers
-        endpoints_builder.url = url
-        endpoints_builder.payload = payload
-        endpoints_builder.success_callback = partial(
-            customer_branch_details_submission_on_success, document_name=data["name"]
-        )
-        endpoints_builder.error_callback = on_error
-
-        frappe.enqueue(
-            endpoints_builder.make_remote_call,
-            is_async=True,
-            queue="default",
-            timeout=300,
-            doctype="Customer",
-            document_name=data["name"],
-            job_name=f"{data['name']}_submit_customer_branch_details",
-        )
+    return process_request(json.dumps(data), "BhfCustSaveReq", customer_branch_details_submission_on_success, method="POST", doctype="Customer")
 
 
 @frappe.whitelist()
@@ -495,7 +463,8 @@ def perform_notice_search(request_data: str) -> str:
 def refresh_code_lists(request_data: str) -> str:
     """Refresh code lists based on request data."""
     tasks = [
-        ("CurrencySearchReq", update_countries),
+        ("CurrencyCountrySearchReq", update_countries),
+        ("CurrencySearchReq", update_currencies),
         ("PackagingUnitSearchReq", update_packaging_units),
         ("UOMSearchReq", update_unit_of_quantity),
         ("TaxSearchReq", update_taxation_type),

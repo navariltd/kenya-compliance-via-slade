@@ -396,7 +396,7 @@ class Slade360EndpointsBuilder(BaseEndpointsBuilder):
             response_data = get_response_data(response)
 
             if response.status_code in {200, 201}:
-                self._success_callback_handler(response_data)
+                self._success_callback_handler(response_data, document_name)
 
                 update_integration_request(
                     self.integration_request.name,

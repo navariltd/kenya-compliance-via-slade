@@ -863,3 +863,38 @@ def update_navari_settings_with_token(docname):
     settings_doc.save()
 
     return settings_doc
+
+
+
+def get_link_value(doctype: str, field_name: str, value: str):
+    try:
+        return frappe.db.get_value(doctype, {field_name: value}, "name")
+    except Exception as e:
+        frappe.log_error(
+            title=f"Error Fetching Link for {doctype}",
+            message=f"Error while fetching link for {doctype} with {field_name}={value}: {str(e)}",
+        )
+        return None
+    
+
+def get_or_create_link(doctype: str, field_name: str, value: str):
+    if not value:
+        return None
+    
+    try:
+        link_name = frappe.db.get_value(doctype, {field_name: value}, "name")
+        if not link_name:
+            link_name = frappe.get_doc({
+                "doctype": doctype,
+                field_name: value,
+                "code": value,
+            }).insert(ignore_permissions=True, ignore_mandatory=True).name
+            frappe.db.commit()
+        return link_name
+    except Exception as e:
+        frappe.log_error(
+            title=f"Error in get_or_create_link for {doctype}",
+            message=f"Error in {doctype} - {value}: {str(e)}",
+        )
+        return None
+

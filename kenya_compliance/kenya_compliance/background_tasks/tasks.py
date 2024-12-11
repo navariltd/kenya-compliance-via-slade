@@ -186,7 +186,7 @@ def update_documents(
     frappe.db.commit()
 
 
-def update_unit_of_quantity(data: dict) -> None:
+def update_unit_of_quantity(data: dict, document_name: str) -> None:
     field_mapping = {
         "slade_id": "id",
         "code": "code",
@@ -197,7 +197,7 @@ def update_unit_of_quantity(data: dict) -> None:
     update_documents(data, UNIT_OF_QUANTITY_DOCTYPE_NAME, field_mapping)
 
 
-def update_packaging_units(data: dict) -> None:
+def update_packaging_units(data: dict, document_name: str) -> None:
     field_mapping = {
         "slade_id": "id",
         "code": "code",
@@ -206,9 +206,19 @@ def update_packaging_units(data: dict) -> None:
         "code_description": "description",
     }
     update_documents(data, PACKAGING_UNIT_DOCTYPE_NAME, field_mapping)
+    
+
+def update_currencies(data: dict, document_name: str) -> None:
+    field_mapping = {
+        "slade_id": "id",
+        "currency_name": "iso_code",
+        "enabled": lambda x: 1 if x.get("active") else 0,
+        "custom_conversion_rate": "conversion_rate",
+    }
+    update_documents(data, "Currency", field_mapping, filter_field="iso_code")
 
 
-def update_item_classification_codes(response: dict | list) -> None:
+def update_item_classification_codes(response: dict | list, document_name: str) -> None:
     field_mapping = {
         "slade_id": "id",
         "itemclscd": "classification_code",
@@ -226,7 +236,7 @@ def update_item_classification_codes(response: dict | list) -> None:
     )
 
 
-def update_taxation_type(data: dict) -> None:
+def update_taxation_type(data: dict, document_name: str) -> None:
     doc: Document | None = None
     tax_list = data.get("results", [])
 
@@ -256,7 +266,7 @@ def update_taxation_type(data: dict) -> None:
     frappe.db.commit()
 
 
-def update_countries(data: list) -> None:
+def update_countries(data: list, document_name: str) -> None:
     doc: Document | None = None
     for code, details in data.items():
         try:
