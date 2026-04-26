@@ -1903,6 +1903,50 @@ def build_return_invoice_payload(
     )
 
 
+# def prepare_return_invoice_payload(
+#     document_name: str,
+#     reference_number: str,
+#     amount: float,
+#     invoice: Document,
+#     kra_invoice_data: Dict[str, Any],
+#     is_full_return: bool,
+#     rate_field: str,
+#     tax_field: str,
+#     convertion_rate: float,
+# ) -> Dict[str, Any]:
+#     items = []
+#     if is_full_return:
+#         for line in kra_invoice_data.get("sales_invoice_lines", []):
+#             items.append(
+#                 {
+#                     "item_name": line.get("product_name"),
+#                     "quantity": round(abs(line.get("quantity", 0)), 2),
+#                     "amount": round(abs(line.get("price_inclusive_tax", 0)), 4),
+#                 }
+#             )
+#     else:
+#         for item in invoice.items:
+#             tax_amount = item.get(tax_field, 0) or 0
+#             qty = abs(item.get("qty"))
+#             base_amount = round(abs(item.get(rate_field)) or 0, 4)
+#             items.append(
+#                 {
+#                     "item_name": item.item_code,
+#                     "quantity": 1,
+#                     "amount": round(base_amount - tax_amount, 4)
+#                     * qty
+#                     * convertion_rate,
+#                 }
+#             )
+
+#     return {
+#         "document_name": document_name,
+#         "invoice_reference": reference_number,
+#         "refund_reason": "13",
+#         # "amount": amount,
+#         "items": items,
+#     }
+
 def prepare_return_invoice_payload(
     document_name: str,
     reference_number: str,
@@ -1926,16 +1970,23 @@ def prepare_return_invoice_payload(
             )
     else:
         for item in invoice.items:
-            tax_amount = item.get(tax_field, 0) or 0
             qty = abs(item.get("qty"))
-            base_amount = round(abs(item.get(rate_field)) or 0, 4)
+            if not qty:
+                continue
+
+            # Use line gross amount directly for returns to avoid mixing unit-rate
+            # values with line-level tax totals.
+            line_gross_amount = abs(float(item.get("amount") or 0))
+            if not line_gross_amount:
+                unit_net_rate = abs(float(item.get(rate_field) or 0))
+                line_tax_amount = abs(float(item.get(tax_field) or 0))
+                line_gross_amount = (unit_net_rate * qty) + line_tax_amount
+
             items.append(
                 {
                     "item_name": item.item_code,
-                    "quantity": 1,
-                    "amount": round(base_amount - tax_amount, 4)
-                    * qty
-                    * convertion_rate,
+                    "quantity": round(qty, 2),
+                    "amount": round(line_gross_amount * convertion_rate, 4),
                 }
             )
 
@@ -1946,7 +1997,6 @@ def prepare_return_invoice_payload(
         # "amount": amount,
         "items": items,
     }
-
 
 def prepare_credit_note_payload(
     document_name: str,
