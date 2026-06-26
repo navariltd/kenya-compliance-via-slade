@@ -2230,19 +2230,46 @@ def clean_url_params(url: str) -> str:
     )
 
 
-def update_sales_invoice_etims_details(name: str) -> None:
-    sales_invoice = frappe.get_doc("Sales Invoice", name)
+LEDGER_VERIFICATION_FIELDS = [
+    "name",
+    "scu_invoice_number",
+    "scu_receipt_number",
+    "scu_id",
+    "scu_mrc_number",
+    "scu_receipt_signature",
+    "scu_receipt_date",
+    "scu_receipt_time",
+    "scu_internal_data",
+    "total_gross_amount",
+    "tax_inclusive_amount",
+    "etims_qr_code_url",
+    "customer_name",
+    "invoice_date",
+    "total_vat",
+    "type",
+    "etims_id",
+    "reference_number",
+    "is_signed",
+    "creation",
+]
 
-    return_invoices = frappe.get_all(
-        "Sales Invoice",
-        filters={"return_against": sales_invoice.name, "docstatus": 1, "is_return": 1},
-        fields=["name"],
-    )
-    invoice_names = [sales_invoice.name] + [d.name for d in return_invoices]
+
+def get_sales_invoice_ledgers(sales_invoice, include_returns: bool = True) -> list:
+    invoice_names = [sales_invoice.name]
+    if include_returns:
+        return_invoices = frappe.get_all(
+            "Sales Invoice",
+            filters={
+                "return_against": sales_invoice.name,
+                "docstatus": 1,
+                "is_return": 1,
+            },
+            fields=["name"],
+        )
+        invoice_names.extend(d.name for d in return_invoices)
 
     Ledger = DocType("eTIMS Sales Ledger Entry")
-
-    query = (
+    return (
         frappe.qb.from_(Ledger)
         .select(
             Ledger.name,
@@ -2253,15 +2280,224 @@ def update_sales_invoice_etims_details(name: str) -> None:
             Ledger.total_gross_amount,
             Ledger.invoice_date,
             Ledger.creation,
+            Ledger.reference_number,
+            Ledger.sales_invoice,
+            Ledger.etims_invoice,
         )
         .where(Ledger.company == sales_invoice.company)
         .where(
             (Ledger.sales_invoice.isin(invoice_names))
             | (Ledger.etims_invoice.isin(invoice_names))
         )
+        .run(as_dict=True)
     )
 
-    ledgers = query.run(as_dict=True)
+
+def _pick_latest_ledger(ledgers: list) -> dict | None:
+    if not ledgers:
+        return None
+
+    signed_ledgers = [ledger for ledger in ledgers if ledger.get("is_signed")]
+    pool = signed_ledgers or ledgers
+    return sorted(pool, key=lambda ledger: ledger.get("creation") or "", reverse=True)[
+        0
+    ]
+
+
+def choose_primary_ledger_entry(ledgers: list, sales_invoice) -> dict | None:
+    if not ledgers:
+        return None
+
+    reference_number = get_invoice_reference_number(sales_invoice)
+    ref_matches = [
+        ledger
+        for ledger in ledgers
+        if ledger.get("reference_number") == reference_number
+    ]
+    candidates = ref_matches or ledgers
+
+    if sales_invoice.is_return:
+        cn_ledgers = [ledger for ledger in candidates if ledger.type == "Credit Note"]
+        if not cn_ledgers:
+            return _pick_latest_ledger(candidates)
+
+        company_currency = frappe.db.get_value(
+            "Company", sales_invoice.company, "default_currency"
+        )
+        conversion_rate = 1
+        if sales_invoice.currency != "KES" and company_currency == "KES":
+            conversion_rate = sales_invoice.conversion_rate
+        elif sales_invoice.currency != "KES":
+            conversion_rate, _ = get_kes_conversion_rate(
+                currency=sales_invoice.currency,
+                company_currency=company_currency,
+                posting_date=sales_invoice.posting_date,
+            )
+
+        target_amount = abs(flt(sales_invoice.grand_total) * flt(conversion_rate))
+        for entry in cn_ledgers:
+            entry_amount = abs(flt(entry.total_gross_amount))
+            if abs(entry_amount - target_amount) <= (entry_amount * 0.01):
+                return entry
+
+        return _pick_latest_ledger(cn_ledgers)
+
+    sale_ledgers = [ledger for ledger in candidates if ledger.type != "Credit Note"]
+    return _pick_latest_ledger(sale_ledgers or candidates)
+
+
+def _get_ledger_by_filters(filters: dict) -> dict | None:
+    return frappe.db.get_value(
+        "eTIMS Sales Ledger Entry",
+        filters,
+        LEDGER_VERIFICATION_FIELDS,
+        as_dict=True,
+    )
+
+
+def _get_return_ledger_entry(return_doc, parent_invoice) -> dict | None:
+    reference_number = get_invoice_reference_number(parent_invoice)
+    parent_ledgers = frappe.get_all(
+        "eTIMS Sales Ledger Entry",
+        filters={
+            "sales_invoice": parent_invoice.name,
+            "reference_number": reference_number,
+        },
+        fields=LEDGER_VERIFICATION_FIELDS,
+        order_by="is_signed desc, creation desc",
+    )
+    parent_ledger = parent_ledgers[0] if parent_ledgers else None
+    if not parent_ledger:
+        return None
+
+    return_ledgers = frappe.get_all(
+        "eTIMS Sales Ledger Entry",
+        filters={
+            "sales_invoice": parent_invoice.name,
+            "etims_invoice": parent_ledger.name,
+            "type": "Credit Note",
+        },
+        fields=LEDGER_VERIFICATION_FIELDS,
+        order_by="is_signed desc, creation desc",
+    )
+    if not return_ledgers:
+        return None
+
+    company_currency = frappe.get_value(
+        "Company", parent_invoice.company, "default_currency"
+    )
+    conversion_rate = 1
+    if return_doc.currency == "KES":
+        conversion_rate = 1
+    elif company_currency == "KES":
+        conversion_rate = return_doc.conversion_rate
+    else:
+        conversion_rate, _ = get_kes_conversion_rate(
+            currency=return_doc.currency,
+            company_currency=company_currency,
+            posting_date=return_doc.posting_date,
+        )
+
+    target_amount = abs(flt(return_doc.grand_total) * flt(conversion_rate))
+    matched_by_amount = None
+    closest_by_date = None
+    min_date_diff = None
+
+    for entry in return_ledgers:
+        entry_amount = abs(flt(entry.total_gross_amount))
+        variance = abs(entry_amount - target_amount)
+        allowance = entry_amount * 0.01
+
+        if variance <= allowance:
+            matched_by_amount = entry
+            break
+
+        if entry.invoice_date and return_doc.posting_date:
+            date_diff = abs(
+                (
+                    get_datetime(entry.invoice_date)
+                    - get_datetime(return_doc.posting_date)
+                ).days
+            )
+            if min_date_diff is None or date_diff < min_date_diff:
+                min_date_diff = date_diff
+                closest_by_date = entry
+
+    return matched_by_amount or closest_by_date or return_ledgers[0]
+
+
+def get_etims_ledger_for_verification(doc) -> dict | None:
+    if doc.is_return:
+        if doc.get("etims_id"):
+            ledger_entry = _get_ledger_by_filters({"etims_id": doc.etims_id})
+            if ledger_entry:
+                return ledger_entry
+
+        if doc.get("etims_qr_code_url"):
+            ledger_entry = _get_ledger_by_filters(
+                {"etims_qr_code_url": doc.etims_qr_code_url}
+            )
+            if ledger_entry:
+                return ledger_entry
+
+        parent_invoice = frappe.get_doc("Sales Invoice", doc.return_against)
+        return _get_return_ledger_entry(doc, parent_invoice)
+
+    if doc.get("etims_id"):
+        ledger_entry = _get_ledger_by_filters({"etims_id": doc.etims_id})
+        if ledger_entry and ledger_entry.get("sales_invoice") == doc.name:
+            return ledger_entry
+
+    if doc.get("etims_qr_code_url"):
+        ledger_entry = _get_ledger_by_filters(
+            {"etims_qr_code_url": doc.etims_qr_code_url}
+        )
+        if ledger_entry and ledger_entry.get("sales_invoice") == doc.name:
+            return ledger_entry
+
+    reference_number = get_invoice_reference_number(doc)
+    reference_ledgers = frappe.get_all(
+        "eTIMS Sales Ledger Entry",
+        filters={
+            "sales_invoice": doc.name,
+            "reference_number": reference_number,
+        },
+        fields=LEDGER_VERIFICATION_FIELDS,
+        order_by="is_signed desc, creation desc",
+    )
+    if reference_ledgers:
+        return reference_ledgers[0]
+
+    ledgers = get_sales_invoice_ledgers(doc, include_returns=False)
+    return choose_primary_ledger_entry(ledgers, doc)
+
+
+def get_invoice_qr_target_url(doc) -> str:
+    if doc.get("etims_qr_code_url"):
+        return doc.etims_qr_code_url
+    if doc.get("etims_verification_url"):
+        return doc.etims_verification_url
+    return build_verification_url(doc)
+
+
+def sync_invoice_qr_image(doc) -> str | None:
+    etims_url = doc.get("etims_qr_code_url")
+    if etims_url:
+        return generate_and_attach_qr_code(etims_url, doc.name, doc.doctype)
+
+    verification_url = doc.get("etims_verification_url") or build_verification_url(doc)
+    if not verification_url:
+        return None
+
+    if not doc.get("etims_qr_image"):
+        return generate_and_attach_qr_code(verification_url, doc.name, doc.doctype)
+
+    return doc.get("etims_qr_image")
+
+
+def update_sales_invoice_etims_details(name: str) -> None:
+    sales_invoice = frappe.get_doc("Sales Invoice", name)
+    ledgers = get_sales_invoice_ledgers(sales_invoice)
 
     updates = {
         "etims_qr_code_url": None,
@@ -2273,87 +2509,41 @@ def update_sales_invoice_etims_details(name: str) -> None:
 
     if ledgers:
         updates["sent_to_etims"] = 1
-
-        if sales_invoice.is_return:
-            cn_ledgers = [l for l in ledgers if l.type == "Credit Note"]
-            if cn_ledgers:
-                company_currency = frappe.db.get_value(
-                    "Company", sales_invoice.company, "default_currency"
-                )
-
-                conversion_rate = 1
-                if sales_invoice.currency != "KES" and company_currency == "KES":
-                    conversion_rate = sales_invoice.conversion_rate
-                elif sales_invoice.currency != "KES":
-                    conversion_rate, _ = get_kes_conversion_rate(
-                        currency=sales_invoice.currency,
-                        company_currency=company_currency,
-                        posting_date=sales_invoice.posting_date,
-                    )
-
-                target_amount = abs(
-                    flt(sales_invoice.grand_total) * flt(conversion_rate)
-                )
-
-                matched_by_amount = None
-                for entry in cn_ledgers:
-                    entry_amount = abs(flt(entry.total_gross_amount))
-                    if abs(entry_amount - target_amount) <= (entry_amount * 0.01):
-                        matched_by_amount = entry
-                        break
-
-                if matched_by_amount:
-                    chosen_ledger = matched_by_amount
-                else:
-                    signed_cn = [l for l in cn_ledgers if l.is_signed]
-                    if signed_cn:
-                        chosen_ledger = sorted(
-                            signed_cn, key=lambda x: x.creation, reverse=True
-                        )[0]
-                    else:
-                        chosen_ledger = sorted(
-                            cn_ledgers, key=lambda x: x.creation, reverse=True
-                        )[0]
-            else:
-                signed_ledgers = [l for l in ledgers if l.is_signed]
-                if signed_ledgers:
-                    chosen_ledger = sorted(
-                        signed_ledgers, key=lambda x: x.creation, reverse=True
-                    )[0]
-                else:
-                    chosen_ledger = sorted(
-                        ledgers, key=lambda x: x.creation, reverse=True
-                    )[0]
-        else:
-            signed_ledgers = [l for l in ledgers if l.is_signed]
-            if signed_ledgers:
-                chosen_ledger = sorted(
-                    signed_ledgers, key=lambda x: x.creation, reverse=True
-                )[0]
-            else:
-                chosen_ledger = sorted(ledgers, key=lambda x: x.creation, reverse=True)[
-                    0
-                ]
-
-        updates.update(
-            {
-                "etims_qr_code_url": chosen_ledger.etims_qr_code_url,
-                "etims_id": chosen_ledger.etims_id,
-            }
-        )
+        chosen_ledger = choose_primary_ledger_entry(ledgers, sales_invoice)
+        if chosen_ledger:
+            updates.update(
+                {
+                    "etims_qr_code_url": chosen_ledger.etims_qr_code_url,
+                    "etims_id": chosen_ledger.etims_id,
+                }
+            )
 
     if not updates["etims_verification_url"]:
         updates["etims_verification_url"] = build_verification_url(sales_invoice)
 
-    if not updates["etims_qr_image"] and updates["etims_verification_url"]:
-        updates["etims_qr_image"] = generate_and_attach_qr_code(
-            updates["etims_verification_url"], sales_invoice.name, sales_invoice.doctype
-        )
+    sales_invoice.etims_qr_code_url = updates.get("etims_qr_code_url")
+    sales_invoice.etims_verification_url = updates["etims_verification_url"]
+    sales_invoice.etims_qr_image = updates["etims_qr_image"]
+    qr_image = sync_invoice_qr_image(sales_invoice)
+    if qr_image:
+        updates["etims_qr_image"] = qr_image
 
     sales_invoice.db_set(updates, update_modified=False)
 
 
 def generate_and_attach_qr_code(url: str, docname: str, doctype: str) -> str:
+    existing_files = frappe.get_all(
+        "File",
+        filters={
+            "attached_to_doctype": doctype,
+            "attached_to_name": docname,
+            "file_name": f"QR-{docname}.png",
+        },
+        pluck="name",
+    )
+    for file_name in existing_files:
+        frappe.delete_doc("File", file_name, ignore_permissions=True)
+
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_L,

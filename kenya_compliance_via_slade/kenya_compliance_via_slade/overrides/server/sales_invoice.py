@@ -7,7 +7,9 @@ from ...utils import (
     apply_item_taxes_and_codes,
     build_verification_url,
     generate_and_attach_qr_code,
+    get_invoice_qr_target_url,
     get_settings,
+    sync_invoice_qr_image,
 )
 from .shared_overrides import generic_invoices_on_submit_override
 
@@ -76,18 +78,21 @@ def regenerate_qr_code(names):
         try:
             doc = frappe.get_doc("Sales Invoice", name)
 
-            etims_verification_url = build_verification_url(doc)
+            qr_target_url = get_invoice_qr_target_url(doc)
 
-            if etims_verification_url:
-                doc.db_set(
-                    "etims_verification_url",
-                    etims_verification_url,
-                    update_modified=False,
-                )
+            if qr_target_url:
+                if not doc.get("etims_verification_url"):
+                    doc.db_set(
+                        "etims_verification_url",
+                        build_verification_url(doc),
+                        update_modified=False,
+                    )
 
-                etims_qr_image = generate_and_attach_qr_code(
-                    etims_verification_url, name, doc.doctype
-                )
+                etims_qr_image = sync_invoice_qr_image(doc)
+                if not etims_qr_image:
+                    etims_qr_image = generate_and_attach_qr_code(
+                        qr_target_url, name, doc.doctype
+                    )
 
                 doc.db_set("etims_qr_image", etims_qr_image, update_modified=False)
 
@@ -97,7 +102,12 @@ def regenerate_qr_code(names):
                     {
                         "invoice": name,
                         "status": "success",
-                        "message": "Verification URL and QR Code regenerated successfully",
+                        "message": "QR Code regenerated successfully"
+                        + (
+                            " with KRA eTIMS URL"
+                            if doc.get("etims_qr_code_url")
+                            else " with verification URL"
+                        ),
                     }
                 )
             else:

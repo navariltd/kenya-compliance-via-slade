@@ -313,6 +313,12 @@ def sales_information_submission_on_success(
         "etims_qr_code_url": response.get("signature_link"),
     }
 
+    signature_link = response.get("signature_link")
+    if signature_link:
+        updates["etims_qr_image"] = generate_and_attach_qr_code(
+            signature_link, document_name, doctype
+        )
+
     frappe.db.set_value(doctype, document_name, updates)
     doc = frappe.get_doc(doctype, document_name)
     invoice_name = doc.return_against if doc.is_return else document_name
