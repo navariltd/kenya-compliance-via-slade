@@ -456,13 +456,24 @@ def build_invoice_payload(invoice: Document, settings_name: str) -> dict:
         or None
     )
 
+    # Same reasoning as customer_pin above: prefer a per-transaction name
+    # captured on the invoice itself (e.g. custom_customer_alias, used by
+    # some front-ends to record a walk-in buyer's name for one sale)
+    # before falling back to the Customer master's name. invoice.get()
+    # returns None for a fieldname that doesn't exist on this Sales
+    # Invoice's doctype, so this is safe on installs without that field.
+    partner_name = (
+        (invoice.get("custom_customer_alias") or "").strip()
+        or frappe.get_value("Customer", invoice.customer, "customer_name")
+        or None
+    )
+
     payload = {
         "document_name": invoice.name,
         "reference_number": reference_number,
         "sales_type": "credit",
         "customer_pin": customer_pin,
-        "partner_name": frappe.get_value("Customer", invoice.customer, "customer_name")
-        or None,
+        "partner_name": partner_name,
         "invoice_date": formatted_date,
         "itemDetails": [],
         "invoice_details": True,
