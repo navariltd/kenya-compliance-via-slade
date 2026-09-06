@@ -445,14 +445,35 @@ def build_invoice_payload(invoice: Document, settings_name: str) -> dict:
     date_str = f"{invoice.posting_date} {invoice.posting_time or '00:00:00'}"
     fmt = "%Y-%m-%d %H:%M:%S.%f" if "." in date_str else "%Y-%m-%d %H:%M:%S"
     formatted_date = datetime.strptime(date_str, fmt).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Prefer a PIN set directly on the invoice (e.g. a walk-in customer's PIN
+    # captured per-transaction) and only fall back to the Customer master's
+    # PIN when the invoice itself doesn't carry one. invoice.tax_id is
+    # already KRA-PIN-validated in generic_invoices_on_submit_override/
+    # validate() before this payload is built.
+    customer_pin = (
+        (invoice.get("tax_id") or "").strip()
+        or frappe.get_value("Customer", invoice.customer, "tax_id")
+        or None
+    )
+
+    # Same reasoning as customer_pin above: prefer a per-transaction name
+    # captured on the invoice itself (e.g. custom_customer_alias, used by
+    # some front-ends to record a walk-in buyer's name for one sale)
+    # before falling back to the Customer master's name. invoice.get()
+    # returns None for a fieldname that doesn't exist on this Sales
+    # Invoice's doctype, so this is safe on installs without that field.
+    partner_name = (
+        (invoice.get("custom_customer_alias") or "").strip()
+        or frappe.get_value("Customer", invoice.customer, "customer_name")
+        or None
+    )
+
     payload = {
         "document_name": invoice.name,
         "reference_number": reference_number,
         "sales_type": "credit",
-        "customer_pin": frappe.get_value("Customer", invoice.customer, "tax_id")
-        or None,
-        "partner_name": frappe.get_value("Customer", invoice.customer, "customer_name")
-        or None,
+        "customer_pin": customer_pin,
+        "partner_name": partner_name,
         "invoice_date": formatted_date,
         "itemDetails": [],
         "invoice_details": True,
