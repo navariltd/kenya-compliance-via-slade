@@ -851,7 +851,7 @@ def update_imported_item_request(request_data: str) -> None:
         request_data,
         "ImportItemUpdateReq",
         imported_item_submission_on_success,
-        method="PUT",
+        request_method="PUT",
         doctype="Item",
     )
 
