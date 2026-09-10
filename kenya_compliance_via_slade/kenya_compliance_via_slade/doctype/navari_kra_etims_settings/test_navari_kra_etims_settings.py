@@ -1,8 +1,8 @@
 # Copyright (c) 2024, Navari Ltd and Contributors
 # See license.txt
 
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests import UnitTestCase
 
 
-class TestNavariKRAeTimsSettings(FrappeTestCase):
+class TestNavariKRAeTimsSettings(UnitTestCase):
     pass
