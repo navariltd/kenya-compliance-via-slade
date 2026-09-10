@@ -256,6 +256,7 @@ scheduler_events = {
     "daily": [
         "kenya_compliance_via_slade.kenya_compliance_via_slade.background_tasks.tasks.run_etims_ledger_scheduler",
         "kenya_compliance_via_slade.kenya_compliance_via_slade.background_tasks.tasks.run_etims_autosubmission_scheduler_daily",
+        "kenya_compliance_via_slade.kenya_compliance_via_slade.background_tasks.integration_request_retention.purge_expired_integration_requests",
     ],
     "weekly": [
         "kenya_compliance_via_slade.kenya_compliance_via_slade.background_tasks.tasks.update_setting_passwords",
