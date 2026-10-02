@@ -33,11 +33,11 @@
   {
    "child": 0,
    "collapsible": 1,
-   "icon": "receipt",
+   "icon": "list-plus",
    "indent": 0,
    "keep_closed": 0,
-   "label": "Sales Invoice",
-   "link_to": "Sales Invoice",
+   "label": "Item",
+   "link_to": "Item",
    "link_type": "DocType",
    "show_arrow": 0,
    "type": "Link"
@@ -45,11 +45,23 @@
   {
    "child": 0,
    "collapsible": 1,
-   "icon": "receipt-text",
+   "icon": "user-star",
    "indent": 0,
    "keep_closed": 0,
-   "label": "Purchase Invoice",
-   "link_to": "Purchase Invoice",
+   "label": "Customer",
+   "link_to": "Customer",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "receipt",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Sales Invoice",
+   "link_to": "Sales Invoice",
    "link_type": "DocType",
    "show_arrow": 0,
    "type": "Link"
@@ -68,11 +80,23 @@
   {
    "child": 1,
    "collapsible": 1,
-   "icon": "setting-gear",
+   "icon": "command",
    "indent": 0,
    "keep_closed": 0,
-   "label": "Settings",
-   "link_to": "Navari KRA eTims Settings",
+   "label": "eTims Queue Manager",
+   "link_to": "eTims Queue Manager",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "git-pull-request-draft",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "eTims Job Queue",
+   "link_to": "eTims Job Queue",
    "link_type": "DocType",
    "show_arrow": 0,
    "type": "Link"
@@ -97,30 +121,6 @@
    "keep_closed": 0,
    "label": "Error Log",
    "link_to": "Error Log",
-   "link_type": "DocType",
-   "show_arrow": 0,
-   "type": "Link"
-  },
-  {
-   "child": 1,
-   "collapsible": 1,
-   "icon": "list-plus",
-   "indent": 0,
-   "keep_closed": 0,
-   "label": "Item",
-   "link_to": "Item",
-   "link_type": "DocType",
-   "show_arrow": 0,
-   "type": "Link"
-  },
-  {
-   "child": 1,
-   "collapsible": 1,
-   "icon": "user-star",
-   "indent": 0,
-   "keep_closed": 0,
-   "label": "Customer",
-   "link_to": "Customer",
    "link_type": "DocType",
    "show_arrow": 0,
    "type": "Link"
@@ -201,9 +201,21 @@
    "link_type": "Report",
    "show_arrow": 0,
    "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "setting-gear",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Settings",
+   "link_to": "Navari KRA eTims Settings",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-07-02 10:49:21.976512",
+ "modified": "2026-10-02 21:00:36.442232",
  "modified_by": "Administrator",
  "module": "Kenya Compliance Via Slade",
  "name": "eTims",

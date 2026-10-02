@@ -15,56 +15,6 @@
  "label": "eTims",
  "links": [
   {
-   "description": "These DocTypes hold error logs to assist in troubleshooting and debugging",
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Logs and Troubleshooting",
-   "link_count": 4,
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Card Break"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Scheduled Job",
-   "link_count": 0,
-   "link_to": "Scheduled Job Type",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Integration Request",
-   "link_count": 0,
-   "link_to": "Integration Request",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Background Job",
-   "link_count": 0,
-   "link_to": "RQ Job",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Error Log",
-   "link_count": 0,
-   "link_to": "Error Log",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
    "hidden": 0,
    "is_query_report": 0,
    "label": "eTims Stock Operation Type",
@@ -419,9 +369,79 @@
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "description": "These DocTypes hold error logs to assist in troubleshooting and debugging",
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Logs and Troubleshooting",
+   "link_count": 6,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Scheduled Job",
+   "link_count": 0,
+   "link_to": "Scheduled Job Type",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Integration Request",
+   "link_count": 0,
+   "link_to": "Integration Request",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Background Job",
+   "link_count": 0,
+   "link_to": "RQ Job",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Error Log",
+   "link_count": 0,
+   "link_to": "Error Log",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "eTims Job Queue",
+   "link_count": 0,
+   "link_to": "eTims Job Queue",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "eTims Queue Manager",
+   "link_count": 0,
+   "link_to": "eTims Queue Manager",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-07-02 10:47:28.319136",
+ "modified": "2026-10-02 20:56:24.320265",
  "modified_by": "Administrator",
  "module": "Kenya Compliance Via Slade",
  "name": "eTims",
@@ -438,7 +458,7 @@
    "doc_view": "List",
    "label": "Detailed Documentation",
    "type": "URL",
-   "url": "https://github.com/navariltd/kenya-compliance-via-slade/wiki"
+   "url": "https://docs.navari.co.ke/kenya-compliance-via-slade360-advantage/getting-started/overview"
   },
   {
    "color": "Blue",

@@ -12,8 +12,18 @@ from ...utils import (
 )
 from .shared_overrides import generic_invoices_on_submit_override
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+MISMATCH_TOLERANCE_PERCENT = 1.0
+MISMATCH_TOLERANCE_ABSOLUTE = 0.1
 
+
+# ---------------------------------------------------------------------------
+# Hook handlers
+# ---------------------------------------------------------------------------
 def on_submit(doc: Document, method: str = None) -> None:
+    """Handle Sales Invoice submission for eTIMS auto-submission."""
     company_name = doc.company
     settings_doc = get_settings(company_name=company_name)
     if not settings_doc:
@@ -32,24 +42,34 @@ def on_submit(doc: Document, method: str = None) -> None:
         except frappe.ValidationError as e:
             frappe.log_error(
                 "Sales Invoice Submission Error",
-                f"Error in Sales Invoice submission: {str(e)}",
+                f"Error in Sales Invoice submission: {e!s}",
             )
 
 
 def before_cancel(doc: Document, method: str = None) -> None:
-    if doc.doctype == "Sales Invoice" and doc.sent_to_etims:
+    """Prevent cancellation of invoices already submitted to eTIMS."""
+    if doc.doctype == "Sales Invoice" and (
+        doc.sent_to_etims or doc.etims_qr_code_url or doc.etims_id
+    ):
         frappe.throw(
-            "This invoice has already been <b>submitted</b> to eTIMS and cannot be <span style='color:red'>Canceled.</span>\n"
+            "This invoice has already been <b>submitted</b> to eTIMS and cannot be "
+            "<span style='color:red'>Canceled.</span>\n"
             "If you need to make adjustments, please create a Credit Note instead."
         )
     elif doc.doctype == "Purchase Invoice" and doc.sent_to_etims:
         frappe.throw(
-            "This invoice has already been <b>submitted</b> to eTIMS and cannot be <span style='color:red'>Canceled.</span>.\nIf you need to make adjustments, please create a Debit Note instead."
+            "This invoice has already been <b>submitted</b> to eTIMS and cannot be "
+            "<span style='color:red'>Canceled.</span>.\n"
+            "If you need to make adjustments, please create a Debit Note instead."
         )
 
 
+# ---------------------------------------------------------------------------
+# Whitelisted endpoints
+# ---------------------------------------------------------------------------
 @frappe.whitelist()
 def send_invoice_details(name: str) -> None:
+    """Manually trigger eTIMS submission for a Sales Invoice."""
     doc = frappe.get_doc("Sales Invoice", name)
     if doc.is_opening == "Yes":
         return
@@ -58,10 +78,11 @@ def send_invoice_details(name: str) -> None:
 
 @frappe.whitelist()
 def regenerate_qr_code(names):
+    """Regenerate QR codes for one or more Sales Invoices."""
     if isinstance(names, str):
         try:
             names = frappe.parse_json(names)
-        except:
+        except Exception:
             names = [names]
 
     if not isinstance(names, list):
@@ -86,6 +107,8 @@ def regenerate_qr_code(names):
                         "message": "Invoice has not been submitted to eTIMS yet",
                     }
                 )
+                continue
+
             etims_qr_image = None
 
             if settings_doc.enable_verification_redirect:
@@ -97,7 +120,6 @@ def regenerate_qr_code(names):
                         etims_verification_url,
                         update_modified=False,
                     )
-
                     etims_qr_image = generate_and_attach_qr_code(
                         etims_verification_url, name, doc.doctype
                     )
@@ -105,7 +127,6 @@ def regenerate_qr_code(names):
                 etims_qr_image = generate_and_attach_qr_code(
                     doc.etims_qr_code_url, name, doc.doctype
                 )
-
             else:
                 results.append(
                     {
@@ -117,7 +138,6 @@ def regenerate_qr_code(names):
                 continue
 
             doc.db_set("etims_qr_image", etims_qr_image, update_modified=False)
-
             frappe.db.commit()
 
             results.append(
@@ -138,6 +158,7 @@ def regenerate_qr_code(names):
 
 @frappe.whitelist()
 def get_single_invoice_reconciliation(invoice_name):
+    """Build a full reconciliation summary for a Sales Invoice."""
     if not invoice_name:
         frappe.throw("Invoice name is required")
 
@@ -165,7 +186,11 @@ def get_single_invoice_reconciliation(invoice_name):
     )
 
 
+# ---------------------------------------------------------------------------
+# ERP-side metrics
+# ---------------------------------------------------------------------------
 def _get_erp_metrics(invoice, company_currency):
+    """Compute ERP-side gross, tax and credit totals in KES."""
     currency = invoice.currency
     conversion_rate = 1
     gross_field, tax_field = "grand_total", "total_taxes_and_charges"
@@ -249,7 +274,11 @@ def _get_erp_metrics(invoice, company_currency):
     }
 
 
+# ---------------------------------------------------------------------------
+# eTIMS-side metrics
+# ---------------------------------------------------------------------------
 def _get_sequential_etims_data(invoice, references):
+    """Fetch all eTIMS ledger entries linked to an invoice and its revisions."""
     Ledger = DocType("eTIMS Sales Ledger Entry")
 
     query = (
@@ -349,7 +378,31 @@ def _get_sequential_etims_data(invoice, references):
     }
 
 
+# ---------------------------------------------------------------------------
+# Summary compilation
+# ---------------------------------------------------------------------------
+def _percent_diff(difference: float, base: float) -> float:
+    """Return the absolute percentage difference relative to a non-zero base."""
+    if not base:
+        return 0.0
+    return abs(difference) / abs(base) * 100.0
+
+
+def _is_within_tolerance(difference: float, base: float) -> bool:
+    """
+    Return True when the difference is within the allowed tolerance.
+
+    Tolerance is satisfied when either:
+    - the absolute difference is below ``MISMATCH_TOLERANCE_ABSOLUTE``, or
+    - the percentage difference is below ``MISMATCH_TOLERANCE_PERCENT``.
+    """
+    if abs(difference) <= MISMATCH_TOLERANCE_ABSOLUTE:
+        return True
+    return _percent_diff(difference, base) < MISMATCH_TOLERANCE_PERCENT
+
+
 def _compile_advanced_summary(invoice, erp, etims, revision_count, current_reference):
+    """Build the full reconciliation payload returned to the client."""
     details = etims.get("details", [])
     actual_ledger_entries = len(details)
 
@@ -360,14 +413,66 @@ def _compile_advanced_summary(invoice, erp, etims, revision_count, current_refer
         d["reference_number"] == invoice.name for d in invoice_entries
     )
 
+    missing_credit_notes = _find_missing_credit_notes(
+        invoice, revision_count, has_original_invoice, credit_entries
+    )
+
+    gross_difference = erp["erp_net_gross"] - etims["etims_net_gross"]
+    tax_difference = erp["erp_net_tax"] - etims["etims_net_tax"]
+
+    gross_within_tolerance = _is_within_tolerance(
+        gross_difference, erp["erp_net_gross"]
+    )
+    tax_within_tolerance = _is_within_tolerance(tax_difference, erp["erp_net_tax"])
+    has_mismatch = not (gross_within_tolerance and tax_within_tolerance)
+
+    compliance_status, action_required, action_code = _determine_compliance_state(
+        actual_ledger_entries, revision_count, missing_credit_notes, has_mismatch
+    )
+
+    _annotate_detail_rows(details, invoice, missing_credit_notes)
+
+    return {
+        "compliance_status": compliance_status,
+        "action_required": action_required,
+        "action_code": action_code,
+        "revision_count": revision_count,
+        "current_reference": current_reference,
+        "expected_ledger_entries": (revision_count * 2) + 1,
+        "actual_ledger_entries": actual_ledger_entries,
+        "tolerance_percent": MISMATCH_TOLERANCE_PERCENT,
+        "metrics": {
+            "erp": erp,
+            "etims": etims,
+            "variance": {
+                "gross_difference": gross_difference,
+                "tax_difference": tax_difference,
+                "gross_difference_percent": _percent_diff(
+                    gross_difference, erp["erp_net_gross"]
+                ),
+                "tax_difference_percent": _percent_diff(
+                    tax_difference, erp["erp_net_tax"]
+                ),
+                "within_tolerance": gross_within_tolerance and tax_within_tolerance,
+            },
+        },
+        "details": details,
+    }
+
+
+def _find_missing_credit_notes(
+    invoice, revision_count, has_original_invoice, credit_entries
+):
+    """Identify revisions that should have an offsetting credit note but don't."""
     missing_credit_notes = []
+
     for r_num in range(1, revision_count + 1):
-        rev_ref = f"{invoice.name}-REV{r_num}"
         expected_cn_ref = (
             f"{invoice.name}-CN{r_num}"
             if r_num == 1
             else f"{invoice.name}-REV{r_num - 1}-CN"
         )
+
         has_rev_credit = any(
             d["reference_number"] == expected_cn_ref
             or (
@@ -380,33 +485,47 @@ def _compile_advanced_summary(invoice, erp, etims, revision_count, current_refer
         if r_num == 1 and has_original_invoice and not has_rev_credit:
             missing_credit_notes.append(invoice.name)
 
-    gross_difference = erp["erp_net_gross"] - etims["etims_net_gross"]
-    tax_difference = erp["erp_net_tax"] - etims["etims_net_tax"]
-    has_mismatch = abs(gross_difference) > 0.1 or abs(tax_difference) > 0.1
+    return missing_credit_notes
 
-    compliance_status = "Balanced"
-    action_required = "None"
-    action_code = "NONE"
 
+def _determine_compliance_state(
+    actual_ledger_entries, revision_count, missing_credit_notes, has_mismatch
+):
+    """Return ``(compliance_status, action_required, action_code)``."""
     if actual_ledger_entries == 0:
-        compliance_status = "Not Submitted"
-        action_required = "Submit Original Invoice to eTIMS"
-        action_code = "SUBMIT_ORIGINAL"
-    elif missing_credit_notes:
-        compliance_status = "Missing Offsetting Credit Note"
-        action_required = f"Generate compensatory eTIMS Credit Note to neutralize original wrong invoice ({', '.join(missing_credit_notes)})"
-        action_code = "TRIGGER_CORRECTION"
-    elif has_mismatch:
-        compliance_status = "Mismatched Ledger Hierarchy"
-        action_required = (
-            f"Trigger Corrective Sequence (Will generate Revision {revision_count + 1})"
+        return (
+            "Not Submitted",
+            "Submit Original Invoice to eTIMS",
+            "SUBMIT_ORIGINAL",
         )
-        action_code = "TRIGGER_CORRECTION"
-    elif actual_ledger_entries != ((revision_count * 2) + 1):
-        compliance_status = "Structural Inconsistency"
-        action_required = "Run Sync or Check Status to synchronize remote ledger items"
-        action_code = "SYNC_STATUS"
 
+    if missing_credit_notes:
+        return (
+            "Missing Offsetting Credit Note",
+            "Generate compensatory eTIMS Credit Note to neutralize original "
+            f"wrong invoice ({', '.join(missing_credit_notes)})",
+            "TRIGGER_CORRECTION",
+        )
+
+    if has_mismatch:
+        return (
+            "Mismatched Ledger Hierarchy",
+            f"Trigger Corrective Sequence (Will generate Revision {revision_count + 1})",
+            "TRIGGER_CORRECTION",
+        )
+
+    if actual_ledger_entries != ((revision_count * 2) + 1):
+        return (
+            "Structural Inconsistency",
+            "Run Sync or Check Status to synchronize remote ledger items",
+            "SYNC_STATUS",
+        )
+
+    return "Balanced", "None", "NONE"
+
+
+def _annotate_detail_rows(details, invoice, missing_credit_notes):
+    """Decorate each ledger row with UI status metadata."""
     for row in details:
         ref_num = row.get("reference_number") or ""
         is_inv = row.get("type") == "Sales Invoice"
@@ -415,87 +534,85 @@ def _compile_advanced_summary(invoice, erp, etims, revision_count, current_refer
         row["row_status"] = "neutral"
         row["status_message"] = "Active Ledger Item Baseline"
         row["action_message"] = (
-            "Tax metrics and payload verification hashes align cleanly with the active document context."
+            "Tax metrics and payload verification hashes align cleanly with the "
+            "active document context."
         )
 
         if is_cn:
-            if (
-                ref_num.endswith("-CN")
-                or ref_num.endswith("-REV-CN")
-                or "-CN" in ref_num
-            ):
-                row["row_status"] = "success"
-                row["status_message"] = "eTIMS Systematic Reversal Credit Note"
-                row["action_message"] = (
-                    "Generated to neutralize an obsolete/incorrect structural payload phase upstream."
-                )
-            elif invoice.is_return and ref_num == invoice.name:
-                row["row_status"] = "success"
-                row["status_message"] = f"Matched Return Credit Note ({invoice.name})"
-                row["action_message"] = (
-                    "Reconciliation track valid. Adjusts systemic fiscal valuation safely within KRA rules."
-                )
-            else:
-                row["row_status"] = "warn"
-                row["status_message"] = "Compensatory Credit Note Record"
-                row["action_message"] = (
-                    f"Linked to eTIMS Invoice Reference: {row.get('etims_invoice') or 'Direct Hierarchy'}"
-                )
+            _annotate_credit_row(row, ref_num, invoice)
         elif is_inv:
-            if row.get("has_returns"):
-                row["row_status"] = "warn"
-                row["status_message"] = "Invoice with Associated Returns"
-                row["action_message"] = (
-                    "Active credit notes point to this transaction ledger entry."
-                )
-            elif "-REV" in ref_num:
-                row["row_status"] = "success"
-                row["status_message"] = f"Active Revised eTIMS Invoice ({ref_num})"
-                row["action_message"] = (
-                    "Overwrites previously neutralized structural entries. Marks the active fiscal baseline."
-                )
-            elif ref_num == invoice.name and missing_credit_notes:
-                row["row_status"] = "danger"
-                row["status_message"] = (
-                    "Wrong Invoice State (Pending Reversal Credit Note)"
-                )
-                row["action_message"] = (
-                    "Required Action: Generate compensatory eTIMS Credit Note to neutralize this baseline entity safely."
-                )
-            elif ref_num == invoice.name and not row.get("is_signed"):
-                row["row_status"] = "danger"
-                row["status_message"] = "Unsigned/Failed Submission Stream Reference"
-                row["action_message"] = (
-                    "Signature verification block absent. Trigger structural sync or manual repair sequence."
-                )
-            elif ref_num == invoice.name:
-                row["row_status"] = "success"
-                row["status_message"] = "Active eTIMS Invoice Ledger Baseline"
-                row["action_message"] = (
-                    "Tax metrics and payload verification hashes align cleanly with the active ERP document status."
-                )
-            else:
-                row["row_status"] = "warn"
-                row["status_message"] = f"Mismatched Version Track ({ref_num})"
-                row["action_message"] = (
-                    "Verify if a balancing credit note entry matches this explicit trace entity."
-                )
+            _annotate_invoice_row(row, ref_num, invoice, missing_credit_notes)
 
-    return {
-        "compliance_status": compliance_status,
-        "action_required": action_required,
-        "action_code": action_code,
-        "revision_count": revision_count,
-        "current_reference": current_reference,
-        "expected_ledger_entries": (revision_count * 2) + 1,
-        "actual_ledger_entries": actual_ledger_entries,
-        "metrics": {
-            "erp": erp,
-            "etims": etims,
-            "variance": {
-                "gross_difference": gross_difference,
-                "tax_difference": tax_difference,
-            },
-        },
-        "details": details,
-    }
+
+def _annotate_credit_row(row, ref_num, invoice):
+    """Set row status metadata for a Credit Note entry."""
+    is_systematic_reversal = (
+        ref_num.endswith("-CN") or ref_num.endswith("-REV-CN") or "-CN" in ref_num
+    )
+
+    if is_systematic_reversal:
+        row["row_status"] = "success"
+        row["status_message"] = "eTIMS Systematic Reversal Credit Note"
+        row["action_message"] = (
+            "Generated to neutralize an obsolete/incorrect structural payload "
+            "phase upstream."
+        )
+    elif invoice.is_return and ref_num == invoice.name:
+        row["row_status"] = "success"
+        row["status_message"] = f"Matched Return Credit Note ({invoice.name})"
+        row["action_message"] = (
+            "Reconciliation track valid. Adjusts systemic fiscal valuation safely "
+            "within KRA rules."
+        )
+    else:
+        row["row_status"] = "warn"
+        row["status_message"] = "Compensatory Credit Note Record"
+        row["action_message"] = (
+            f"Linked to eTIMS Invoice Reference: "
+            f"{row.get('etims_invoice') or 'Direct Hierarchy'}"
+        )
+
+
+def _annotate_invoice_row(row, ref_num, invoice, missing_credit_notes):
+    """Set row status metadata for a Sales Invoice entry."""
+    if row.get("has_returns"):
+        row["row_status"] = "warn"
+        row["status_message"] = "Invoice with Associated Returns"
+        row["action_message"] = (
+            "Active credit notes point to this transaction ledger entry."
+        )
+    elif "-REV" in ref_num:
+        row["row_status"] = "success"
+        row["status_message"] = f"Active Revised eTIMS Invoice ({ref_num})"
+        row["action_message"] = (
+            "Overwrites previously neutralized structural entries. Marks the "
+            "active fiscal baseline."
+        )
+    elif ref_num == invoice.name and missing_credit_notes:
+        row["row_status"] = "danger"
+        row["status_message"] = "Wrong Invoice State (Pending Reversal Credit Note)"
+        row["action_message"] = (
+            "Required Action: Generate compensatory eTIMS Credit Note to "
+            "neutralize this baseline entity safely."
+        )
+    elif ref_num == invoice.name and not row.get("is_signed"):
+        row["row_status"] = "danger"
+        row["status_message"] = "Unsigned/Failed Submission Stream Reference"
+        row["action_message"] = (
+            "Signature verification block absent. Trigger structural sync or "
+            "manual repair sequence."
+        )
+    elif ref_num == invoice.name:
+        row["row_status"] = "success"
+        row["status_message"] = "Active eTIMS Invoice Ledger Baseline"
+        row["action_message"] = (
+            "Tax metrics and payload verification hashes align cleanly with the "
+            "active ERP document status."
+        )
+    else:
+        row["row_status"] = "warn"
+        row["status_message"] = f"Mismatched Version Track ({ref_num})"
+        row["action_message"] = (
+            "Verify if a balancing credit note entry matches this explicit "
+            "trace entity."
+        )
