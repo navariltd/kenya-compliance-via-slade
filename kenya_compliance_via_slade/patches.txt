@@ -1,7 +1,11 @@
 [pre_model_sync]
 kenya_compliance_via_slade.kenya_compliance_via_slade.patches.drop_custom_fields # 23/07/25 
+kenya_compliance_via_slade.kenya_compliance_via_slade.patches.migrate_queue_reliability # 10/09/2026
+
 
 [post_model_sync]
+kenya_compliance_via_slade.kenya_compliance_via_slade.patches.backfill_active_queue_jobs # 10/09/2026
+kenya_compliance_via_slade.kenya_compliance_via_slade.patches.finalize_queue_reliability # 10/09/2026
 # kenya_compliance_via_slade.kenya_compliance_via_slade.patches.create_connection_links # 22/03/26
 # kenya_compliance_via_slade.kenya_compliance_via_slade.patches.migrate_to_multi_company # 153/07/25 
 # kenya_compliance_via_slade.kenya_compliance_via_slade.patches.set_etims_mappings_active # 13/03/26

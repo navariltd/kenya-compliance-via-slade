@@ -8,6 +8,9 @@ from ..apis.api_builder import EndpointsBuilder
 from ..doctype.doctype_names_mapping import (
     SETTINGS_DOCTYPE_NAME,
 )
+from ..queue import policy
+from ..queue.identity import build_request_id
+from ..queue.job_store import enqueue_job
 from ..utils import (
     build_headers,
     get_route_path,
@@ -31,7 +34,7 @@ def process_request(
     settings_name: str = None,
     company: str = None,
     queue: bool = True,
-    page_size: int = 200,
+    page_size: int = 50,
     page: int = 1,
 ) -> str | None:
     """Create eTims Job Queue entry only. No execution is performed."""
@@ -64,10 +67,24 @@ def process_request(
         if not settings or settings.get("is_active") != 1:
             return
 
+        resolved_settings_name = settings_name or settings.name
+
+        reference_docname = document_name if document_name and doctype else None
+
+        request_id = build_request_id(
+            route_key=route_key,
+            request_method=request_method,
+            company=company_name,
+            settings_name=resolved_settings_name,
+            reference_doctype=doctype,
+            reference_docname=reference_docname,
+            request_data=data,
+            page=page,
+        )
+
         if queue:
-            queue_doc = frappe.get_doc(
+            queue_name = enqueue_job(
                 {
-                    "doctype": "eTims Job Queue",
                     "route_key": route_key,
                     "handler_function": (
                         f"{handler_function.__module__}.{handler_function.__name__}"
@@ -77,13 +94,14 @@ def process_request(
                     "request_method": request_method,
                     "status": "Pending",
                     "reference_doctype": doctype,
-                    "reference_docname": document_name
-                    if document_name and doctype
-                    else None,
+                    "reference_docname": reference_docname,
                     "company": company_name,
-                    "settings_name": settings_name or settings.name,
+                    "settings_name": resolved_settings_name,
                     "request_data": data,
                     "retry_count": 0,
+                    "max_retries": policy.max_retries(),
+                    "request_id": request_id,
+                    "dedupe_key": request_id,
                     "error_callback": (
                         f"{error_callback.__module__}.{error_callback.__name__}"
                         if error_callback
@@ -95,11 +113,9 @@ def process_request(
                 }
             )
 
-            queue_doc.insert(ignore_permissions=True)
-
             frappe.db.commit()
 
-            return queue_doc.name
+            return queue_name
 
         else:
             headers = build_headers(company_name, branch_id, settings_name)
@@ -180,16 +196,15 @@ def execute_remote_request(
     document_name: str,
     settings: dict,
     job_queue: Document | None,
-    page_size: int = 200,
+    page_size: int = 50,
     page: int = 1,
     company: str = None,
 ) -> None:
     """
     Configure ``EndpointsBuilder`` and issue the remote HTTP call.
 
-    After the call returns, check whether the response contains a ``next``
-    field indicating additional pages.  If so, ask the job to enqueue a
-    follow-up job for the next page.
+    After the call returns, if the response advertises a ``next`` page the job
+    schedules a follow-up job for it.
 
     Args:
         headers: HTTP request headers (including ``Authorization``).
@@ -204,6 +219,9 @@ def execute_remote_request(
         document_name: Reference document name.
         settings: eTims Settings dict.
         job_queue: The driving ``eTimsJobQueue`` document, or ``None``.
+        page_size: Page size for paginated requests.
+        page: Pagination page for this request.
+        company: Company associated with the request.
     """
     endpoints_builder.headers = headers
     endpoints_builder.url = url
@@ -236,20 +254,28 @@ def _create_next_page_job(current_job: Document, next_url: str) -> None:
 
     The new job inherits all configuration from *current_job* but targets
     ``next_url`` (the URL returned in the ``next`` field of the API response)
-    and advances the page counter by one.  The job is inserted synchronously
-    (instead of via a deferred background enqueue) so the queue manager can
-    pick it up immediately after the current job completes.
+    and advances the page counter by one.
 
     Args:
         current_job: The ``eTims Job Queue`` document that just completed and
-                     returned a ``next`` URL.
+            returned a ``next`` URL.
         next_url: Full URL for the next page as returned by the remote API.
     """
-    current_page = int(current_job.page or 1)
+    next_page = int(current_job.page or 1) + 1
 
-    next_job = frappe.get_doc(
+    request_id = build_request_id(
+        route_key=current_job.route_key,
+        request_method=current_job.request_method,
+        company=current_job.company,
+        settings_name=current_job.settings_name,
+        reference_doctype=current_job.reference_doctype,
+        reference_docname=current_job.reference_docname,
+        request_data=current_job.request_data,
+        page=next_page,
+    )
+
+    enqueue_job(
         {
-            "doctype": "eTims Job Queue",
             "route_key": current_job.route_key,
             "handler_function": current_job.handler_function,
             "request_method": current_job.request_method,
@@ -260,11 +286,13 @@ def _create_next_page_job(current_job: Document, next_url: str) -> None:
             "settings_name": current_job.settings_name,
             "request_data": current_job.request_data,
             "retry_count": 0,
+            "max_retries": policy.max_retries(),
+            "request_id": request_id,
+            "dedupe_key": request_id,
             "error_callback": current_job.error_callback,
             "url": next_url,
-            "page_size": current_job.page_size or 200,
-            "page": current_page + 1,
+            "page_size": current_job.page_size or 50,
+            "page": next_page,
             "is_page": 1,
         }
     )
-    next_job.insert(ignore_permissions=True)

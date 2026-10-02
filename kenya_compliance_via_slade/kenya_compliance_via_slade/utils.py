@@ -9,7 +9,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from io import BytesIO
-from typing import Any, Dict, List, Union
+from typing import Any
 from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
 
 import aiohttp
@@ -64,12 +64,11 @@ async def make_get_request(url: str) -> dict[str, str] | str:
     Returns:
         dict: The Response
     """
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as response:
-            if response.content_type.startswith("text"):
-                return await response.text()
+    async with aiohttp.ClientSession() as session, session.get(url) as response:
+        if response.content_type.startswith("text"):
+            return await response.text()
 
-            return await response.json()
+        return await response.json()
 
 
 async def make_post_request(
@@ -449,7 +448,8 @@ def build_invoice_payload(invoice: Document, settings_name: str) -> dict:
         "document_name": invoice.name,
         "reference_number": reference_number,
         "sales_type": "credit",
-        "customer_pin": frappe.get_value("Customer", invoice.customer, "tax_id")
+        "customer_pin": invoice.tax_id
+        or frappe.get_value("Customer", invoice.customer, "tax_id")
         or None,
         "partner_name": frappe.get_value("Customer", invoice.customer, "customer_name")
         or None,
@@ -641,7 +641,7 @@ def bytes_to_base64_string(data: bytes) -> str:
     return b64encode(data).decode("utf-8")
 
 
-def quantize_number(number: str | int | float) -> str:
+def quantize_number(number: str | float) -> str:
     """Return number value to two decimal points"""
     return Decimal(number).quantize(Decimal(".01"), rounding=ROUND_DOWN).to_eng_string()
 
@@ -1293,7 +1293,7 @@ def get_link_value(
     except Exception as e:
         frappe.log_error(
             title=f"Error Fetching Link for {doctype}",
-            message=f"Error while fetching link for {doctype} with {field_name}={value}: {str(e)}",
+            message=f"Error while fetching link for {doctype} with {field_name}={value}: {e!s}",
         )
         return None
 
@@ -1321,7 +1321,7 @@ def get_or_create_link(doctype: str, field_name: str, value: str) -> str:
     except Exception as e:
         frappe.log_error(
             title=f"Error in get_or_create_link for {doctype}",
-            message=f"Error in {doctype} - {value}: {str(e)}",
+            message=f"Error in {doctype} - {value}: {e!s}",
         )
         return None
 
@@ -1728,8 +1728,8 @@ def get_etims_action_data(doctype: str, docname: str = None) -> dict[str, Any]:
 
 
 def parse_response_data(
-    response: Union[str, bytes, dict, list], expected_type: type = list
-) -> Union[List[Any], Dict[str, Any], Any]:
+    response: str | bytes | dict | list, expected_type: type = list
+) -> list[Any] | dict[str, Any] | Any:
     """Parse and convert response data to expected type using standard json.
 
     Args:
@@ -1747,7 +1747,7 @@ def parse_response_data(
         try:
             response = json.loads(response)
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON: {str(e)}") from e
+            raise ValueError(f"Invalid JSON: {e!s}") from e
 
     if response is None:
         return expected_type()
@@ -1766,7 +1766,7 @@ def parse_response_data(
         return expected_type(response) if response else expected_type()
 
     except (TypeError, AttributeError) as e:
-        raise TypeError(f"Cannot convert to {expected_type}: {str(e)}") from e
+        raise TypeError(f"Cannot convert to {expected_type}: {e!s}") from e
 
 
 def build_item_payload(item, settings_name: str, slade_id: str = None) -> dict:
@@ -1944,8 +1944,8 @@ def get_invoice_reference_number(invoice: Document) -> str:
 
 
 def build_return_invoice_payload(
-    invoice: Document, kra_invoice_data: Dict[str, Any]
-) -> Dict[str, Any]:
+    invoice: Document, kra_invoice_data: dict[str, Any]
+) -> dict[str, Any]:
     """
     Build a return invoice payload for eTims.
 
@@ -2010,12 +2010,12 @@ def prepare_return_invoice_payload(
     reference_number: str,
     amount: float,
     invoice: Document,
-    kra_invoice_data: Dict[str, Any],
+    kra_invoice_data: dict[str, Any],
     is_full_return: bool,
     rate_field: str,
     tax_field: str,
     convertion_rate: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     items = []
     if is_full_return:
         for line in kra_invoice_data.get("sales_invoice_lines", []):
@@ -2072,11 +2072,11 @@ def prepare_credit_note_payload(
     reference_number: str,
     amount: float,
     invoice: Document,
-    kra_invoice_data: Dict[str, Any],
+    kra_invoice_data: dict[str, Any],
     is_full_return: bool,
     rate_field: str,
     tax_field: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     items = []
 
     if is_full_return:
@@ -2113,9 +2113,9 @@ def prepare_credit_note_payload(
 
 def prepare_credit_note_items_payload(
     credit_note: str,
-    data: Dict[str, Any],
+    data: dict[str, Any],
     settings_name: str,
-) -> Dict:
+) -> dict:
     items = data.get("sales_invoice_lines", [])
     credit_note_items = []
     for item in items:
@@ -2449,7 +2449,7 @@ def analyze_etims_eligibility(invoice_name):
         if not customer_slade_id:
             errors.append(f"Customer {doc.customer} is not registered in eTIMS.")
     except Exception as e:
-        errors.append(f"Failed to validate customer {doc.customer} in eTIMS: {str(e)}")
+        errors.append(f"Failed to validate customer {doc.customer} in eTIMS: {e!s}")
 
     for item in doc.items:
         try:
@@ -2462,9 +2462,7 @@ def analyze_etims_eligibility(invoice_name):
             if not slade_id:
                 errors.append(f"Item {item.item_code} is not registered in eTIMS.")
         except Exception as e:
-            errors.append(
-                f"Failed to validate item {item.item_code} in eTIMS: {str(e)}"
-            )
+            errors.append(f"Failed to validate item {item.item_code} in eTIMS: {e!s}")
 
     if doc.is_return and doc.return_against:
         try:
@@ -2479,7 +2477,7 @@ def analyze_etims_eligibility(invoice_name):
                 )
         except Exception as e:
             errors.append(
-                f"Failed to validate return against invoice {doc.return_against}: {str(e)}"
+                f"Failed to validate return against invoice {doc.return_against}: {e!s}"
             )
 
     last_error = None
