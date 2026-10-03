@@ -14,6 +14,7 @@ from frappe.utils import now_datetime
 
 from ..logger import etims_logger
 from ..utils import (
+    LEGACY_AUTH_PROVIDER,
     clean_url_params,
     reset_auth_password,
     update_last_request_date,
@@ -862,7 +863,10 @@ class EndpointsBuilder(BaseEndpointsBuilder):
         else:
             error = str(response_data)
 
-        if "could not decode json" in error.lower():
+        if (
+            "could not decode json" in error.lower()
+            and self.settings.auth_provider == LEGACY_AUTH_PROVIDER
+        ):
             reset_auth_password(self.settings.name)
 
         _update_integration_request(
