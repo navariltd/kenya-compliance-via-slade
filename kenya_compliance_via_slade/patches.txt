@@ -12,3 +12,4 @@ kenya_compliance_via_slade.kenya_compliance_via_slade.patches.finalize_queue_rel
 # kenya_compliance_via_slade.kenya_compliance_via_slade.patches.set_taxation_type_codes # 22/03/26
 # kenya_compliance_via_slade.kenya_compliance_via_slade.patches.migrate_csf_ke_data # 13/06/2026
 # kenya_compliance_via_slade.kenya_compliance_via_slade.patches.purge_invalid_etims_ledger_records # 03/06/2026
+kenya_compliance_via_slade.kenya_compliance_via_slade.patches.set_legacy_auth_provider # 05/10/2026

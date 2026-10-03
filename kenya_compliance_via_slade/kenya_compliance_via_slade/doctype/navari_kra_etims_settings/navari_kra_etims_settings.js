@@ -2,11 +2,17 @@
 // For license information, please see license.txt
 
 frappe.ui.form.on("Navari KRA eTims Settings", {
+  onload: function (frm) {
+    frm.fields_dict.access_token.df.formatter = (value) =>
+      value ? `${value.slice(0, 24)}…****` : "";
+    frm.fields_dict.client_secret.disable_password_checks();
+  },
   refresh: function (frm) {
     const companyName = frm.doc.company;
 
     frm.fields_dict.get_new_token.$wrapper
       .find("button")
+      .off("click")
       .on("click", function () {
         frappe.call({
           method:
@@ -18,6 +24,7 @@ frappe.ui.form.on("Navari KRA eTims Settings", {
           freeze: true,
           freeze_message: __("Updating token..."),
           callback: (response) => {
+            frm.reload_doc();
             frappe.msgprint({
               title: __("Success"),
               indicator: "green",
@@ -232,6 +239,7 @@ frappe.ui.form.on("Navari KRA eTims Settings", {
           freeze: true,
           freeze_message: __("Updating token..."),
           callback: (response) => {
+            frm.reload_doc();
             frappe.msgprint({
               title: __("Success"),
               indicator: "green",
@@ -422,8 +430,13 @@ frappe.ui.form.on("Navari KRA eTims Settings", {
     const sandboxFieldValue = parseInt(frm.doc.sandbox);
     const sandboxServerUrl = "https://api-dev.slade360edi.com/erp";
     const productionServerUrl = "https://api.erp.slade360.co.ke";
-    const sandboxAuthUrl = "https://accounts.multitenant.slade360.co.ke";
-    const productionAuthUrl = "https://accounts.edi.slade360.co.ke";
+    const isLegacy = frm.doc.auth_provider === "Legacy";
+    const sandboxAuthUrl = isLegacy
+      ? "https://accounts.multitenant.slade360.co.ke"
+      : "https://identity-dev.slade360edi.com";
+    const productionAuthUrl = isLegacy
+      ? "https://accounts.edi.slade360.co.ke"
+      : "https://identity.slade360.com";
 
     if (sandboxFieldValue === 1) {
       frm.set_value("env", "Sandbox");
