@@ -96,6 +96,7 @@ jobs:
         working-directory: /home/runner/frappe-bench
         run: |
           bench get-app erpnext --branch version-16
+          bench get-app hrms --branch version-16
           bench get-app https://github.com/navariltd/csf_ke --branch ft-etims
           bench get-app kenya_compliance_via_slade $GITHUB_WORKSPACE
     
