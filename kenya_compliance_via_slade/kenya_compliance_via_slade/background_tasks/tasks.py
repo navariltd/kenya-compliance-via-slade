@@ -18,7 +18,7 @@ from ..doctype.doctype_names_mapping import (
     SETTINGS_DOCTYPE_NAME,
     WORKSTATION_DOCTYPE_NAME,
 )
-from ..utils import get_max_submission_attempts
+from ..utils import LEGACY_AUTH_PROVIDER, get_max_submission_attempts
 from .task_response_handlers import (
     fetch_etims_sales_invoices_on_success,
     operation_types_search_on_success,
@@ -533,7 +533,7 @@ def send_purchase_information(settings_name: str = None) -> None:
 def update_setting_passwords() -> None:
     settings_list = frappe.get_all(
         "Navari KRA ETIMS Settings",
-        filters={"is_active": 1, "sandbox": 0},
+        filters={"is_active": 1, "sandbox": 0, "auth_provider": LEGACY_AUTH_PROVIDER},
         fields=["name"],
     )
     for setting in settings_list:
