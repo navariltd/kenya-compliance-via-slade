@@ -1,4 +1,9 @@
+import re
+from html import unescape
+from urllib.parse import urlparse
+
 import frappe
+import requests
 from frappe.model.document import Document
 from frappe.query_builder import DocType
 from frappe.utils import flt
@@ -125,6 +130,65 @@ def regenerate_qr_code(names):
             results.append({"invoice": name, "status": "error", "message": str(e)})
 
     return {"results": results, "total": len(results), "errors": len(errors)}
+
+
+@frappe.whitelist()
+def fetch_etims_receipt_details(name: str) -> dict:
+    doc = frappe.get_doc("Sales Invoice", name)
+    receipt_url = doc.get("etims_qr_code_url")
+    if not receipt_url:
+        frappe.throw("This invoice has no eTIMS QR code URL yet.")
+
+    parsed = urlparse(receipt_url)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme not in ("http", "https") or not hostname.endswith("kra.go.ke"):
+        frappe.throw("The eTIMS QR code URL is not a KRA receipt link.")
+
+    try:
+        response = requests.get(receipt_url, timeout=20)
+        response.raise_for_status()
+    except requests.RequestException:
+        frappe.throw("Unable to reach the KRA eTIMS receipt page. Please try again.")
+
+    details = {
+        field: value
+        for field, value in _parse_etims_receipt_html(response.text).items()
+        if value
+    }
+    if not details.get("custom_temp_scu_id"):
+        frappe.throw("The KRA receipt page did not include SCU details yet.")
+
+    frappe.db.set_value("Sales Invoice", name, details, update_modified=False)
+    return details
+
+
+def _parse_etims_receipt_html(html: str) -> dict:
+    pairs = re.findall(
+        r'class="tit[^"]*"[^>]*>(.*?)</span>\s*<span[^>]*class="value[^"]*"[^>]*>(.*?)</span>',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    labels = {}
+    for raw_label, raw_value in pairs:
+        label = _clean_receipt_text(raw_label).rstrip(":").strip().lower()
+        value = _clean_receipt_text(raw_value)
+        if label and value:
+            labels[label] = value
+
+    control_unit = labels.get("control unit number")
+    return {
+        "custom_temp_scu_id": control_unit,
+        "custom_temp_scu_invoice_no_": labels.get("invoice number"),
+        "custom_temp_scu_mrc_no": control_unit,
+        "custom_temp_receipt_signature": labels.get("receipt signature"),
+        "custom_temp_current_receipt_no": labels.get("receipt number"),
+    }
+
+
+def _clean_receipt_text(value: str) -> str:
+    text = re.sub(r"<[^>]+>", "", value)
+    text = unescape(text).replace("\xa0", " ")
+    return " ".join(text.split())
 
 
 @frappe.whitelist()

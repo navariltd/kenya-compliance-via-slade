@@ -716,6 +716,16 @@ function addCustomButtons(frm, activeSetting, summaryData) {
     );
   }
 
+  if (frm.doc.etims_qr_code_url) {
+    frm.add_custom_button(
+      __("Fetch ETIMS Details"),
+      function () {
+        fetchEtimsReceiptDetails(frm);
+      },
+      __("eTims Actions"),
+    );
+  }
+
   frm.add_custom_button(
     __("Sync or Check Status"),
     function () {
@@ -761,6 +771,24 @@ function addCustomButtons(frm, activeSetting, summaryData) {
       __("eTims Actions"),
     );
   }
+}
+
+function fetchEtimsReceiptDetails(frm) {
+  frappe.call({
+    method:
+      "kenya_compliance_via_slade.kenya_compliance_via_slade.overrides.server.sales_invoice.fetch_etims_receipt_details",
+    args: { name: frm.doc.name },
+    freeze: true,
+    freeze_message: __("Fetching eTIMS receipt details..."),
+    callback: function (response) {
+      if (!response.message) return;
+      frappe.show_alert({
+        message: __("eTIMS receipt details updated"),
+        indicator: "green",
+      });
+      frm.reload_doc();
+    },
+  });
 }
 
 async function regenerateQRCode(frm, activeSetting) {
