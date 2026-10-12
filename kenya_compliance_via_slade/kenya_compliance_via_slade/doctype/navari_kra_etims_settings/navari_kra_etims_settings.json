@@ -13,6 +13,7 @@
   "is_active",
   "settings_section",
   "server_url",
+  "auth_provider",
   "auth_server_url",
   "warehouse",
   "workstation",
@@ -257,20 +258,22 @@
    "fieldtype": "Column Break"
   },
   {
+   "depends_on": "eval:doc.auth_provider==\"Legacy\"",
    "fieldname": "auth_username",
    "fieldtype": "Data",
    "label": "Auth Username",
-   "reqd": 1
+   "mandatory_depends_on": "eval:doc.auth_provider==\"Legacy\""
   },
   {
+   "depends_on": "eval:doc.auth_provider==\"Legacy\"",
    "fieldname": "auth_password",
    "fieldtype": "Password",
    "label": "Auth Password",
-   "reqd": 1
+   "mandatory_depends_on": "eval:doc.auth_provider==\"Legacy\""
   },
   {
    "fieldname": "access_token",
-   "fieldtype": "Data",
+   "fieldtype": "Small Text",
    "label": "Access Token",
    "no_copy": 1,
    "read_only": 1
@@ -316,7 +319,15 @@
    "options": "Navari KRA eTims Workstation"
   },
   {
-   "default": "https://accounts.multitenant.slade360.co.ke",
+   "default": "Slade360 Identity",
+   "fieldname": "auth_provider",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Auth Provider",
+   "options": "Legacy\nSlade360 Identity"
+  },
+  {
+   "default": "https://identity-dev.slade360edi.com",
    "description": "Slade360 Auth Server URL. Don't fill if you're not sure what to input.",
    "fieldname": "auth_server_url",
    "fieldtype": "Data",
@@ -441,6 +452,7 @@
    "label": "Get New Token"
   },
   {
+   "depends_on": "eval:doc.auth_provider==\"Legacy\"",
    "fieldname": "reset_auth_password",
    "fieldtype": "Button",
    "label": "Reset Auth Password"
@@ -605,7 +617,7 @@
    "link_fieldname": "reference_docname"
   }
  ],
- "modified": "2026-07-02 10:48:16.043808",
+ "modified": "2026-10-05 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Kenya Compliance Via Slade",
  "name": "Navari KRA eTims Settings",

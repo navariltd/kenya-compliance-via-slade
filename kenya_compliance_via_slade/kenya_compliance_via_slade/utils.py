@@ -39,6 +39,8 @@ from .doctype.doctype_names_mapping import (
 )
 from .logger import etims_logger
 
+LEGACY_AUTH_PROVIDER = "Legacy"
+
 
 def is_valid_kra_pin(pin: str) -> bool:
     """Checks if the string provided conforms to the pattern of a KRA PIN.
@@ -922,15 +924,24 @@ def authenticate_and_get_token(
     client_id: str,
     client_secret: str,
     docname: str = None,
+    auth_provider: str = LEGACY_AUTH_PROVIDER,
 ) -> dict:
-    url = f"{auth_server_url}/oauth2/token/"
-    payload = {
-        "username": username,
-        "password": password,
-        "grant_type": "password",
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }
+    if auth_provider == LEGACY_AUTH_PROVIDER:
+        url = f"{auth_server_url}/oauth2/token/"
+        payload = {
+            "username": username,
+            "password": password,
+            "grant_type": "password",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+    else:
+        url = f"{auth_server_url}/realms/slade360/protocol/openid-connect/token"
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/x-www-form-urlencoded",
@@ -1019,14 +1030,25 @@ def update_navari_settings_with_token(docname: str, skip_checks: bool = False) -
         )
     )
     if needs_update:
+        auth_provider = settings_doc.auth_provider
         auth_server_url = settings_doc.auth_server_url
         username = settings_doc.auth_username
         client_id = settings_doc.client_id
-        password = settings_doc.get_password("auth_password")
+        password = (
+            settings_doc.get_password("auth_password")
+            if auth_provider == LEGACY_AUTH_PROVIDER
+            else None
+        )
         client_secret = settings_doc.get_password("client_secret")
 
         token_details = authenticate_and_get_token(
-            auth_server_url, username, password, client_id, client_secret, docname
+            auth_server_url,
+            username,
+            password,
+            client_id,
+            client_secret,
+            docname,
+            auth_provider,
         )
 
         if not token_details:
