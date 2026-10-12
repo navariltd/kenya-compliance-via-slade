@@ -1,4 +1,3 @@
-
 name: CI
 
 on:
@@ -96,6 +95,8 @@ jobs:
         working-directory: /home/runner/frappe-bench
         run: |
           bench get-app erpnext --branch version-16
+          bench get-app hrms --branch version-16
+          bench get-app https://github.com/navariltd/csf_ke
           bench get-app kenya_compliance_via_slade $GITHUB_WORKSPACE
     
       - name: Install
