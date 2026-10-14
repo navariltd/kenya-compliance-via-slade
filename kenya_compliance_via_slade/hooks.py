@@ -6,6 +6,18 @@ app_email = "support@navari.co.ke"
 app_license = "GNU Affero General Public License v3.0"
 required_apps = ["erpnext", "navariltd/csf_ke"]
 
+add_to_apps_screen = [
+    {
+        "name": app_name,
+        "logo": "/assets/kenya_compliance_via_slade/icon-etims.png",
+        "title": app_title,
+    }
+]
+
+code_only_modules = {"eTims": ["Kenya Compliance Via Slade"]}
+
+# SVG sprite holding the eTIMS icon used by the dock (`etims-duotone`)
+app_include_icons = ["/assets/kenya_compliance_via_slade/icons/etims-icons.svg"]
 
 # Fixtures
 # --------
