@@ -29,6 +29,14 @@ frappe.listview_settings[doctypeName].onload = async function (listview) {
     __("eTims Actions"),
   );
 
+  listview.page.add_inner_button(
+    __("Generate Credit Notes from Excel"),
+    function () {
+      showCreditNotesFromExcelDialog(listview);
+    },
+    __("eTims Actions"),
+  );
+
   listview.page.add_action_item(__("Refetch eTIMS Invoices"), () => {
     const selected_docs = listview.get_checked_items();
 
@@ -110,6 +118,191 @@ frappe.listview_settings[doctypeName].onload = async function (listview) {
     );
   });
 };
+
+function showCreditNotesFromExcelDialog(listview) {
+  const dialog = new frappe.ui.Dialog({
+    title: __("Generate Credit Notes from Excel"),
+    fields: [
+      {
+        label: __("Excel File"),
+        fieldname: "excel_file",
+        fieldtype: "Attach",
+        reqd: 1,
+        description: __(
+          "Column 5 must contain the eTIMS invoice number, for example |KRACU0300003967/1378.",
+        ),
+      },
+    ],
+    primary_action_label: __("Review"),
+    primary_action(values) {
+      frappe.call({
+        method:
+          "kenya_compliance_via_slade.kenya_compliance_via_slade.background_tasks.tasks.preview_credit_notes_from_excel",
+        args: { file_url: values.excel_file },
+        freeze: true,
+        freeze_message: __("Reading Excel..."),
+        callback(response) {
+          if (!response.message) return;
+          dialog.hide();
+          showCreditNoteExcelSummary(listview, response.message);
+        },
+      });
+    },
+  });
+
+  dialog.show();
+}
+
+function showCreditNoteExcelSummary(listview, summary) {
+  const escape = frappe.utils.escape_html;
+  const flaggedRows = (summary.flagged || [])
+    .map(
+      (row) => `
+        <tr>
+          <td>${escape(row.scu_invoice_number || "")}</td>
+          <td>${escape(row.reference_number || "—")}</td>
+          <td>${escape(row.reason || "")}</td>
+        </tr>`,
+    )
+    .join("");
+
+  const generateRows = (summary.to_generate || [])
+    .map(
+      (row) => `
+        <tr>
+          <td>${escape(row.scu_invoice_number || "")}</td>
+          <td>${escape(row.reference_number || "")}</td>
+        </tr>`,
+    )
+    .join("");
+
+  const summaryDialog = new frappe.ui.Dialog({
+    title: __("Credit Note Summary"),
+    size: "extra-large",
+    fields: [
+      {
+        fieldtype: "HTML",
+        fieldname: "summary_html",
+        options: `
+          <div style="margin-bottom: 12px;">
+            <div><strong>${__("Invoices in Excel")}:</strong> ${summary.total_invoices}</div>
+            <div><strong>${__("Credit notes to generate")}:</strong> ${summary.to_generate_count}</div>
+            <div><strong>${__("Flagged and skipped")}:</strong> ${summary.flagged_count}</div>
+            <p style="margin-top: 8px; color: var(--text-muted);">
+              ${__("Only eTIMS Sales Ledger entries whose reference number contains a revision such as REV1 will be submitted. Each credit note is sent after the previous one, with a 5 second wait.")}
+            </p>
+          </div>
+          ${
+            summary.to_generate_count
+              ? `<h5>${__("Will generate")}</h5>
+                 <div style="max-height: 180px; overflow: auto; margin-bottom: 16px;">
+                   <table class="table table-bordered table-sm">
+                     <thead><tr><th>${__("eTIMS Invoice")}</th><th>${__("Reference Number")}</th></tr></thead>
+                     <tbody>${generateRows}</tbody>
+                   </table>
+                 </div>`
+              : ""
+          }
+          ${
+            summary.flagged_count
+              ? `<h5>${__("Flagged")}</h5>
+                 <div style="max-height: 220px; overflow: auto;">
+                   <table class="table table-bordered table-sm">
+                     <thead><tr><th>${__("eTIMS Invoice")}</th><th>${__("Reference Number")}</th><th>${__("Reason")}</th></tr></thead>
+                     <tbody>${flaggedRows}</tbody>
+                   </table>
+                 </div>`
+              : ""
+          }
+        `,
+      },
+    ],
+    primary_action_label: __("Generate Credit Notes"),
+    primary_action() {
+      if (!summary.to_generate_count) {
+        frappe.msgprint(__("No credit notes to generate."));
+        return;
+      }
+      summaryDialog.hide();
+      submitCreditNotesFromExcel(listview, summary.to_generate);
+    },
+  });
+
+  if (!summary.to_generate_count) {
+    summaryDialog.set_primary_action(__("Close"), () => summaryDialog.hide());
+  }
+
+  summaryDialog.show();
+}
+
+function submitCreditNotesFromExcel(listview, entries) {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const failures = [];
+
+  frappe.show_progress(__("Generating Credit Notes"), 0, entries.length);
+
+  return frappe
+    .run_serially(
+      entries.map((entry, index) => {
+        return async () => {
+          frappe.show_progress(
+            __("Generating Credit Notes"),
+            index,
+            entries.length,
+            __("Submitting {0}", [entry.scu_invoice_number]),
+          );
+          try {
+            await frappe.call({
+              method:
+                "kenya_compliance_via_slade.kenya_compliance_via_slade.background_tasks.tasks.return_etims_credit_note",
+              args: {
+                name: entry.name,
+                queue: false,
+              },
+            });
+          } catch (error) {
+            failures.push(entry.scu_invoice_number);
+          }
+          if (index < entries.length - 1) {
+            await wait(5000);
+          }
+        };
+      }),
+    )
+    .then(() => {
+      frappe.show_progress(
+        __("Generating Credit Notes"),
+        entries.length,
+        entries.length,
+        __("Done"),
+      );
+      setTimeout(() => frappe.hide_progress(), 1500);
+      listview.refresh();
+
+      if (failures.length) {
+        frappe.msgprint({
+          title: __("Some credit notes were not submitted"),
+          indicator: "orange",
+          message: __(
+            "{0} of {1} credit notes were submitted. These invoices failed: {2}",
+            [
+              entries.length - failures.length,
+              entries.length,
+              failures.join(", "),
+            ],
+          ),
+        });
+        return;
+      }
+
+      frappe.show_alert({
+        message: __("Credit notes submitted for {0} invoices.", [
+          entries.length,
+        ]),
+        indicator: "green",
+      });
+    });
+}
 
 function showSettingsModalAndExecute(settings) {
   const executeFetch = (settings_name, request_data, invoice_type) => {

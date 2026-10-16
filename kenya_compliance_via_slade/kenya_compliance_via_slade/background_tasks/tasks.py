@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timedelta
 from typing import List
 
@@ -860,3 +861,106 @@ def return_etims_credit_note(
         company=ledger_entry.company,
         queue=queue,
     )
+
+
+REV_REFERENCE_PATTERN = re.compile(r"REV\d+", re.IGNORECASE)
+SCU_INVOICE_COLUMN_INDEX = 4
+
+
+def _clean_scu_invoice_number(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip().lstrip("|").strip()
+
+
+@frappe.whitelist()
+def preview_credit_notes_from_excel(file_url: str) -> dict:
+    from frappe.utils.xlsxutils import read_xlsx_file_from_attached_file
+
+    if not file_url:
+        frappe.throw("Upload an Excel file first.")
+
+    rows = read_xlsx_file_from_attached_file(file_url=file_url) or []
+    invoice_numbers = []
+    for row in rows:
+        if not row or len(row) <= SCU_INVOICE_COLUMN_INDEX:
+            continue
+        scu_invoice_number = _clean_scu_invoice_number(row[SCU_INVOICE_COLUMN_INDEX])
+        if "/" not in scu_invoice_number:
+            continue
+        invoice_numbers.append(scu_invoice_number)
+
+    to_generate = []
+    flagged = []
+    seen = set()
+
+    for scu_invoice_number in invoice_numbers:
+        if scu_invoice_number in seen:
+            flagged.append(
+                {
+                    "scu_invoice_number": scu_invoice_number,
+                    "reference_number": "",
+                    "reason": "Duplicate row in the Excel file",
+                }
+            )
+            continue
+        seen.add(scu_invoice_number)
+
+        entries = frappe.get_all(
+            "eTIMS Sales Ledger Entry",
+            filters={
+                "scu_invoice_number": ["in", [scu_invoice_number, f"|{scu_invoice_number}"]],
+                "type": "Sales Invoice",
+            },
+            fields=["name", "reference_number", "scu_invoice_number"],
+        )
+
+        if not entries:
+            flagged.append(
+                {
+                    "scu_invoice_number": scu_invoice_number,
+                    "reference_number": "",
+                    "reason": "No Sales Invoice entry in eTIMS Sales Ledger",
+                }
+            )
+            continue
+
+        if len(entries) > 1:
+            flagged.append(
+                {
+                    "scu_invoice_number": scu_invoice_number,
+                    "reference_number": ", ".join(
+                        entry.reference_number or "" for entry in entries
+                    ),
+                    "reason": "More than one Sales Invoice ledger entry matches this invoice",
+                }
+            )
+            continue
+
+        entry = entries[0]
+        reference_number = entry.reference_number or ""
+        if not REV_REFERENCE_PATTERN.search(reference_number):
+            flagged.append(
+                {
+                    "scu_invoice_number": scu_invoice_number,
+                    "reference_number": reference_number,
+                    "reason": "Reference number has no revision such as REV1",
+                }
+            )
+            continue
+
+        to_generate.append(
+            {
+                "name": entry.name,
+                "scu_invoice_number": entry.scu_invoice_number,
+                "reference_number": reference_number,
+            }
+        )
+
+    return {
+        "total_invoices": len(invoice_numbers),
+        "to_generate_count": len(to_generate),
+        "flagged_count": len(flagged),
+        "to_generate": to_generate,
+        "flagged": flagged,
+    }
