@@ -10,7 +10,7 @@ add_to_apps_screen = [
     {
         "name": app_name,
         "logo": "/assets/kenya_compliance_via_slade/icon-etims.png",
-        "title": app_title,
+        "title": "KRA eTIMS",
     }
 ]
 

@@ -40,3 +40,6 @@ QUEUE_DOCTYPE: Final[str] = "eTims Job Queue"
 # Global Variables
 SANDBOX_SERVER_URL: Final[str] = "https://etims-api-sbx.kra.go.ke/etims-api"
 PRODUCTION_SERVER_URL: Final[str] = "https://etims-api.kra.go.ke/etims-api"
+
+# Slade Headers
+X_APP_HEADER: Final[str] = "etims"

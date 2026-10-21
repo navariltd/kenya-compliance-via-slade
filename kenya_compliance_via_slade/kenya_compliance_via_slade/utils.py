@@ -36,6 +36,7 @@ from .doctype.doctype_names_mapping import (
     TAXATION_TYPE_DOCTYPE_NAME,
     UNIT_OF_QUANTITY_DOCTYPE_NAME,
     WORKSTATION_DOCTYPE_NAME,
+    X_APP_HEADER,
 )
 from .logger import etims_logger
 
@@ -308,6 +309,8 @@ def build_headers(
 
         if workstation:
             headers["X-Workstation"] = workstation
+        else:
+            headers["X-App"] = X_APP_HEADER
 
         return headers
 
