@@ -9,9 +9,15 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     # "frappe~=15.0.0" # Installed and managed by bench.
+<<<<<<< HEAD
     "aiohttp==3.9.1",
     "deprecation==2.1.0",
     "qrcode==7.4.2",
+=======
+    "aiohttp>=3.14.5,<4",
+    "deprecation>=2.1.0,<3",
+    "qrcode>=7.4.2,<9",
+>>>>>>> ee5e87f (fix: update aiohttp dependency version to 3.14.5)
     "bs4"
 ]
 
