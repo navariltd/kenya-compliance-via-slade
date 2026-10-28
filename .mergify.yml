@@ -1,4 +1,14 @@
 pull_request_rules:
+  - name: backport to version-15
+    conditions:
+      - label = backport version-15
+    actions:
+      backport:
+        branches:
+          - version-15
+        assignees:
+          - "{{ author }}"
+
   - name: backport to develop
     conditions:
       - label = backport develop
