@@ -284,9 +284,9 @@ frappe.ui.form.on("Navari KRA eTims Settings", {
     );
 
     frm.add_custom_button(
-      __("Find REV1 Without Credit Notes"),
+      __("Find Duplicates Without Credit Notes"),
       function () {
-        showRev1WithoutCreditNotesDialog(frm);
+        showDuplicatesWithoutCreditNotesDialog(frm);
       },
       __("eTims Actions"),
     );
@@ -445,54 +445,40 @@ frappe.ui.form.on("Navari KRA eTims Settings", {
   },
 });
 
-function showRev1WithoutCreditNotesDialog(frm) {
+function showDuplicatesWithoutCreditNotesDialog(frm) {
   const dialog = new frappe.ui.Dialog({
-    title: __("Find REV1 Invoices Without Credit Notes"),
+    title: __("Find Duplicates Without Credit Notes"),
     fields: [
       {
         fieldtype: "HTML",
         fieldname: "help_html",
         options: `<p style="margin-bottom: 12px; color: var(--text-muted);">
           ${__(
-            "Date range applies only to the Sales Invoice ledger SCU Receipt Date (not the Credit Note date). Finds REV1 Sales Invoice ledgers in that range that have no Credit Note whose etims_invoice links back to them.",
+            "Upload the duplicated invoices Excel. Column 5 must contain the eTIMS invoice number, for example |KRACU0300003967/1378. Each row is checked against eTIMS Sales Ledger; a credit note counts only when a Credit Note ledger entry has etims_invoice pointing to that Sales Invoice ledger entry.",
           )}
         </p>`,
       },
       {
-        label: __("Start Date"),
-        fieldname: "start_date",
-        fieldtype: "Date",
+        label: __("Excel File"),
+        fieldname: "excel_file",
+        fieldtype: "Attach",
         reqd: 1,
-        default: frappe.datetime.add_months(frappe.datetime.get_today(), -1),
-      },
-      {
-        label: __("End Date"),
-        fieldname: "end_date",
-        fieldtype: "Date",
-        reqd: 1,
-        default: frappe.datetime.get_today(),
       },
     ],
-    primary_action_label: __("Find"),
+    primary_action_label: __("Check"),
     primary_action(values) {
       frappe.call({
         method:
-          "kenya_compliance_via_slade.kenya_compliance_via_slade.doctype.navari_kra_etims_settings.navari_kra_etims_settings.find_rev1_invoices_without_credit_notes",
+          "kenya_compliance_via_slade.kenya_compliance_via_slade.doctype.navari_kra_etims_settings.navari_kra_etims_settings.find_excel_invoices_without_credit_notes",
         args: {
-          start_date: values.start_date,
-          end_date: values.end_date,
+          file_url: values.excel_file,
         },
         freeze: true,
-        freeze_message: __("Searching eTIMS Sales Ledger..."),
+        freeze_message: __("Checking Excel invoices against eTIMS Sales Ledger..."),
         callback(response) {
+          if (!response.message) return;
           dialog.hide();
-          const payload = response.message || {};
-          showRev1WithoutCreditNotesResults(
-            payload.entries || [],
-            payload.summary || {},
-            values.start_date,
-            values.end_date,
-          );
+          showDuplicatesWithoutCreditNotesResults(response.message);
         },
       });
     },
@@ -501,57 +487,62 @@ function showRev1WithoutCreditNotesDialog(frm) {
   dialog.show();
 }
 
-function showRev1WithoutCreditNotesResults(
-  entries,
-  summary,
-  start_date,
-  end_date,
-) {
+function showDuplicatesWithoutCreditNotesResults(summary) {
   const escape = frappe.utils.escape_html;
   const formatCurrency = (amount) =>
     format_currency(amount || 0, frappe.boot.sysdefaults.currency);
-  const revInRange = summary.rev_in_range || 0;
-  const alreadyCredited = summary.already_credited || 0;
-  const withoutCreditNote =
-    summary.without_credit_note != null
-      ? summary.without_credit_note
-      : entries.length;
 
-  const rows = (entries || [])
-    .map((entry) => {
-      const receiptDate = entry.scu_receipt_date
-        ? frappe.datetime.str_to_user(entry.scu_receipt_date)
-        : "—";
-      const ledgerLink = frappe.utils.get_form_link(
-        "eTIMS Sales Ledger Entry",
-        entry.name,
-        true,
-        escape(entry.name),
-      );
-      const invoiceLink = entry.sales_invoice
-        ? frappe.utils.get_form_link(
-            "Sales Invoice",
-            entry.sales_invoice,
-            true,
-            escape(entry.sales_invoice),
-          )
-        : "—";
+  const entryRows = (entries) =>
+    (entries || [])
+      .map((entry) => {
+        const receiptDate = entry.scu_receipt_date
+          ? frappe.datetime.str_to_user(entry.scu_receipt_date)
+          : "—";
+        const ledgerLink = entry.name
+          ? frappe.utils.get_form_link(
+              "eTIMS Sales Ledger Entry",
+              entry.name,
+              true,
+              escape(entry.name),
+            )
+          : "—";
+        const invoiceLink = entry.sales_invoice
+          ? frappe.utils.get_form_link(
+              "Sales Invoice",
+              entry.sales_invoice,
+              true,
+              escape(entry.sales_invoice),
+            )
+          : "—";
 
-      return `
+        return `
+          <tr>
+            <td>${escape(entry.scu_invoice_number || "—")}</td>
+            <td>${escape(entry.reference_number || "—")}</td>
+            <td>${ledgerLink}</td>
+            <td>${escape(receiptDate)}</td>
+            <td>${invoiceLink}</td>
+            <td>${escape(entry.customer_name || "—")}</td>
+            <td style="text-align: right;">${escape(
+              formatCurrency(entry.total_gross_amount),
+            )}</td>
+          </tr>`;
+      })
+      .join("");
+
+  const flaggedRows = (summary.flagged || [])
+    .map(
+      (row) => `
         <tr>
-          <td>${ledgerLink}</td>
-          <td>${escape(entry.reference_number || "")}</td>
-          <td>${escape(entry.scu_invoice_number || "—")}</td>
-          <td>${escape(receiptDate)}</td>
-          <td>${invoiceLink}</td>
-          <td>${escape(entry.customer_name || "—")}</td>
-          <td style="text-align: right;">${escape(formatCurrency(entry.total_gross_amount))}</td>
-        </tr>`;
-    })
+          <td>${escape(row.scu_invoice_number || "")}</td>
+          <td>${escape(row.reference_number || "—")}</td>
+          <td>${escape(row.reason || "")}</td>
+        </tr>`,
+    )
     .join("");
 
   const resultsDialog = new frappe.ui.Dialog({
-    title: __("REV1 Without Credit Notes"),
+    title: __("Duplicates Without Credit Notes"),
     size: "extra-large",
     fields: [
       {
@@ -559,39 +550,76 @@ function showRev1WithoutCreditNotesResults(
         fieldname: "results_html",
         options: `
           <div style="margin-bottom: 12px;">
-            <div><strong>${__("SCU Receipt Date")}:</strong> ${escape(
-              frappe.datetime.str_to_user(start_date),
-            )} → ${escape(frappe.datetime.str_to_user(end_date))}</div>
-            <div><strong>${__("REV Sales Invoices in range")}:</strong> ${revInRange}</div>
-            <div><strong>${__("Already have Credit Note (etims_invoice link)")}:</strong> ${alreadyCredited}</div>
-            <div><strong>${__("Still need Credit Note")}:</strong> ${withoutCreditNote}</div>
+            <div><strong>${__("Invoices in Excel")}:</strong> ${summary.total_invoices || 0}</div>
+            <div><strong>${__("Still need Credit Note")}:</strong> ${summary.without_credit_note_count || 0}</div>
+            <div><strong>${__("Already have Credit Note")}:</strong> ${summary.already_credited_count || 0}</div>
+            <div><strong>${__("Flagged / skipped")}:</strong> ${summary.flagged_count || 0}</div>
             <p style="margin-top: 8px; color: var(--text-muted);">
               ${__(
-                "Date filter used the invoice SCU Receipt Date only. Credit Notes are matched by etims_invoice link, regardless of Credit Note date.",
+                "Credit Notes are matched by etims_invoice link on the Credit Note ledger entry, not by Credit Note date.",
               )}
             </p>
           </div>
           ${
-            entries.length
-              ? `<div style="max-height: 420px; overflow: auto;">
+            summary.without_credit_note_count
+              ? `<h5>${__("Need Credit Note")}</h5>
+                 <div style="max-height: 260px; overflow: auto; margin-bottom: 16px;">
                    <table class="table table-bordered table-sm">
                      <thead>
                        <tr>
-                         <th>${__("Ledger Entry")}</th>
-                         <th>${__("Reference Number")}</th>
                          <th>${__("eTIMS Invoice")}</th>
+                         <th>${__("Reference Number")}</th>
+                         <th>${__("Ledger Entry")}</th>
                          <th>${__("SCU Receipt Date")}</th>
                          <th>${__("Sales Invoice")}</th>
                          <th>${__("Customer")}</th>
                          <th>${__("Gross Amount")}</th>
                        </tr>
                      </thead>
-                     <tbody>${rows}</tbody>
+                     <tbody>${entryRows(summary.without_credit_note)}</tbody>
                    </table>
                  </div>`
-              : `<div class="text-muted">${__(
-                  "No Sales Invoice ledger entries with REV reference and SCU Receipt Date in this range are missing a Credit Note etims_invoice link.",
+              : `<div class="text-muted" style="margin-bottom: 16px;">${__(
+                  "All matched Excel invoices already have a Credit Note etims_invoice link.",
                 )}</div>`
+          }
+          ${
+            summary.already_credited_count
+              ? `<h5>${__("Already have Credit Note")}</h5>
+                 <div style="max-height: 180px; overflow: auto; margin-bottom: 16px;">
+                   <table class="table table-bordered table-sm">
+                     <thead>
+                       <tr>
+                         <th>${__("eTIMS Invoice")}</th>
+                         <th>${__("Reference Number")}</th>
+                         <th>${__("Ledger Entry")}</th>
+                         <th>${__("SCU Receipt Date")}</th>
+                         <th>${__("Sales Invoice")}</th>
+                         <th>${__("Customer")}</th>
+                         <th>${__("Gross Amount")}</th>
+                       </tr>
+                     </thead>
+                     <tbody>${entryRows(summary.already_credited)}</tbody>
+                   </table>
+                 </div>`
+              : ""
+          }
+          ${
+            summary.flagged_count
+              ? `<h5>${__("Flagged")}</h5>
+                 <div style="max-height: 180px; overflow: auto;">
+                   <table class="table table-bordered table-sm">
+                     <thead>
+                       <tr>
+                         <th>${__("eTIMS Invoice")}</th>
+                         <th>${__("Reference Number")}</th>
+                         <th>${__("Reason")}</th>
+                       </tr>
+                     </thead>
+                     <tbody>${flaggedRows}</tbody>
+                   </table>
+                 </div>`
+              : ""
           }
         `,
       },

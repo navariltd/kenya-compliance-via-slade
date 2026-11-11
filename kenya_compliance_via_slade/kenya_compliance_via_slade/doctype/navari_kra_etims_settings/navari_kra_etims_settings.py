@@ -1,9 +1,7 @@
 import json
-import re
 
 import frappe
 from frappe.model.document import Document
-from frappe.utils import getdate
 
 from ...doctype.doctype_names_mapping import (
     ORGANISATION_MAPPING_DOCTYPE_NAME,
@@ -14,7 +12,13 @@ from ...utils import (
     update_navari_settings_with_token,
 )
 
-REV_REFERENCE_PATTERN = re.compile(r"REV\d+", re.IGNORECASE)
+SCU_INVOICE_COLUMN_INDEX = 4
+
+
+def _clean_scu_invoice_number(value) -> str:
+    if value is None:
+        return ""
+    return str(value).strip().lstrip("|").strip()
 
 
 class NavariKRAeTimsSettings(Document):
@@ -128,89 +132,125 @@ class NavariKRAeTimsSettings(Document):
 
 
 @frappe.whitelist()
-def find_rev1_invoices_without_credit_notes(
-    start_date, end_date, settings_name=None, company=None
-):
-    """Find revised Sales Invoice ledger entries that still need a credit note.
+def find_excel_invoices_without_credit_notes(file_url: str) -> dict:
+    """From an Excel of duplicated eTIMS invoices, list those without a credit note.
 
-    Date filter applies only to the Sales Invoice ledger's scu_receipt_date.
-    Credit Notes are detected separately (no date filter) when a Credit Note
-    ledger entry has etims_invoice = this Sales Invoice ledger name.
+    Excel column 5 (index 4) must contain the SCU invoice number, e.g.
+    |KRACU0300003967/1378.
+
+    A credit note exists when a Credit Note eTIMS Sales Ledger Entry has
+    etims_invoice pointing to the Sales Invoice ledger entry. Credit Note
+    dates are ignored.
     """
-    if not start_date or not end_date:
-        frappe.throw("Start Date and End Date are required.")
+    from frappe.utils.xlsxutils import read_xlsx_file_from_attached_file
 
-    start_date = getdate(start_date)
-    end_date = getdate(end_date)
-    if start_date > end_date:
-        frappe.throw("Start Date cannot be after End Date.")
+    if not file_url:
+        frappe.throw("Upload an Excel file first.")
 
-    # Date range = Sales Invoice SCU Receipt Date only (never Credit Note dates)
-    filters = {
-        "type": "Sales Invoice",
-        "scu_receipt_date": ["between", [start_date, end_date]],
-        "reference_number": ["like", "%REV%"],
-    }
-    if settings_name:
-        filters["etims_settings"] = settings_name
-    if company:
-        filters["company"] = company
+    rows = read_xlsx_file_from_attached_file(file_url=file_url) or []
+    invoice_numbers = []
+    for row in rows:
+        if not row or len(row) <= SCU_INVOICE_COLUMN_INDEX:
+            continue
+        scu_invoice_number = _clean_scu_invoice_number(row[SCU_INVOICE_COLUMN_INDEX])
+        if "/" not in scu_invoice_number:
+            continue
+        invoice_numbers.append(scu_invoice_number)
 
-    entries = frappe.get_all(
-        "eTIMS Sales Ledger Entry",
-        filters=filters,
-        fields=[
-            "name",
-            "reference_number",
-            "scu_invoice_number",
-            "scu_receipt_date",
-            "sales_invoice",
-            "total_gross_amount",
-            "customer_name",
-            "company",
-        ],
-        order_by="scu_receipt_date asc, name asc",
-    )
+    without_credit_note = []
+    already_credited = []
+    flagged = []
+    seen = set()
 
-    rev_entries = [
-        entry
-        for entry in entries
-        if REV_REFERENCE_PATTERN.search(entry.reference_number or "")
-    ]
+    for scu_invoice_number in invoice_numbers:
+        if scu_invoice_number in seen:
+            flagged.append(
+                {
+                    "scu_invoice_number": scu_invoice_number,
+                    "reference_number": "",
+                    "reason": "Duplicate row in the Excel file",
+                }
+            )
+            continue
+        seen.add(scu_invoice_number)
 
-    if not rev_entries:
-        return {
-            "entries": [],
-            "summary": {
-                "rev_in_range": 0,
-                "already_credited": 0,
-                "without_credit_note": 0,
-            },
-        }
-
-    # Credit Notes: match by etims_invoice link only — ignore Credit Note dates
-    credited_names = set(
-        frappe.get_all(
+        entries = frappe.get_all(
             "eTIMS Sales Ledger Entry",
             filters={
-                "type": "Credit Note",
-                "etims_invoice": ["in", [entry.name for entry in rev_entries]],
+                "scu_invoice_number": [
+                    "in",
+                    [scu_invoice_number, f"|{scu_invoice_number}"],
+                ],
+                "type": "Sales Invoice",
             },
-            pluck="etims_invoice",
+            fields=[
+                "name",
+                "reference_number",
+                "scu_invoice_number",
+                "scu_receipt_date",
+                "sales_invoice",
+                "total_gross_amount",
+                "customer_name",
+                "company",
+            ],
         )
-    )
 
-    without_credit_note = [
-        entry for entry in rev_entries if entry.name not in credited_names
-    ]
+        if not entries:
+            flagged.append(
+                {
+                    "scu_invoice_number": scu_invoice_number,
+                    "reference_number": "",
+                    "reason": "No Sales Invoice entry in eTIMS Sales Ledger",
+                }
+            )
+            continue
+
+        if len(entries) > 1:
+            flagged.append(
+                {
+                    "scu_invoice_number": scu_invoice_number,
+                    "reference_number": ", ".join(
+                        entry.reference_number or "" for entry in entries
+                    ),
+                    "reason": "More than one Sales Invoice ledger entry matches this invoice",
+                }
+            )
+            continue
+
+        entry = entries[0]
+        has_credit_note = frappe.db.exists(
+            "eTIMS Sales Ledger Entry",
+            {
+                "type": "Credit Note",
+                "etims_invoice": entry.name,
+            },
+        )
+
+        row = {
+            "name": entry.name,
+            "reference_number": entry.reference_number,
+            "scu_invoice_number": entry.scu_invoice_number or scu_invoice_number,
+            "scu_receipt_date": entry.scu_receipt_date,
+            "sales_invoice": entry.sales_invoice,
+            "total_gross_amount": entry.total_gross_amount,
+            "customer_name": entry.customer_name,
+            "company": entry.company,
+        }
+
+        if has_credit_note:
+            already_credited.append(row)
+        else:
+            without_credit_note.append(row)
 
     return {
-        "entries": without_credit_note,
-        "summary": {
-            "rev_in_range": len(rev_entries),
-            "already_credited": len(credited_names),
-            "without_credit_note": len(without_credit_note),
-        },
+        "total_invoices": len(invoice_numbers),
+        "unique_invoices": len(seen),
+        "without_credit_note_count": len(without_credit_note),
+        "already_credited_count": len(already_credited),
+        "flagged_count": len(flagged),
+        "without_credit_note": without_credit_note,
+        "already_credited": already_credited,
+        "flagged": flagged,
     }
 
 
