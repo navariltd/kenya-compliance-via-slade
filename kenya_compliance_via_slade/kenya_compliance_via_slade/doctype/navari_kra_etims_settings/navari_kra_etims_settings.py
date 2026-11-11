@@ -128,12 +128,14 @@ class NavariKRAeTimsSettings(Document):
 
 
 @frappe.whitelist()
-def find_rev1_invoices_without_credit_notes(start_date, end_date, company=None):
-    """Return Sales Invoice eTIMS ledger entries with REV references and no credit note.
+def find_rev1_invoices_without_credit_notes(
+    start_date, end_date, settings_name=None, company=None
+):
+    """Find revised Sales Invoice ledger entries that still need a credit note.
 
-    Looks for Sales Invoice ledger rows whose SCU Receipt Date falls in the given
-    range, whose reference_number contains a revision suffix such as REV1, and that
-    have no Credit Note ledger entry linked via etims_invoice.
+    Date filter applies only to the Sales Invoice ledger's scu_receipt_date.
+    Credit Notes are detected separately (no date filter) when a Credit Note
+    ledger entry has etims_invoice = this Sales Invoice ledger name.
     """
     if not start_date or not end_date:
         frappe.throw("Start Date and End Date are required.")
@@ -143,11 +145,14 @@ def find_rev1_invoices_without_credit_notes(start_date, end_date, company=None):
     if start_date > end_date:
         frappe.throw("Start Date cannot be after End Date.")
 
+    # Date range = Sales Invoice SCU Receipt Date only (never Credit Note dates)
     filters = {
         "type": "Sales Invoice",
         "scu_receipt_date": ["between", [start_date, end_date]],
         "reference_number": ["like", "%REV%"],
     }
+    if settings_name:
+        filters["etims_settings"] = settings_name
     if company:
         filters["company"] = company
 
@@ -172,9 +177,18 @@ def find_rev1_invoices_without_credit_notes(start_date, end_date, company=None):
         for entry in entries
         if REV_REFERENCE_PATTERN.search(entry.reference_number or "")
     ]
-    if not rev_entries:
-        return []
 
+    if not rev_entries:
+        return {
+            "entries": [],
+            "summary": {
+                "rev_in_range": 0,
+                "already_credited": 0,
+                "without_credit_note": 0,
+            },
+        }
+
+    # Credit Notes: match by etims_invoice link only — ignore Credit Note dates
     credited_names = set(
         frappe.get_all(
             "eTIMS Sales Ledger Entry",
@@ -186,7 +200,18 @@ def find_rev1_invoices_without_credit_notes(start_date, end_date, company=None):
         )
     )
 
-    return [entry for entry in rev_entries if entry.name not in credited_names]
+    without_credit_note = [
+        entry for entry in rev_entries if entry.name not in credited_names
+    ]
+
+    return {
+        "entries": without_credit_note,
+        "summary": {
+            "rev_in_range": len(rev_entries),
+            "already_credited": len(credited_names),
+            "without_credit_note": len(without_credit_note),
+        },
+    }
 
 
 @frappe.whitelist()

@@ -454,7 +454,7 @@ function showRev1WithoutCreditNotesDialog(frm) {
         fieldname: "help_html",
         options: `<p style="margin-bottom: 12px; color: var(--text-muted);">
           ${__(
-            "Lists Sales Invoice eTIMS Sales Ledger entries whose SCU Receipt Date is in range, reference number has a revision such as REV1, and no Credit Note is linked via etims_invoice.",
+            "Date range applies only to the Sales Invoice ledger SCU Receipt Date (not the Credit Note date). Finds REV1 Sales Invoice ledgers in that range that have no Credit Note whose etims_invoice links back to them.",
           )}
         </p>`,
       },
@@ -481,14 +481,15 @@ function showRev1WithoutCreditNotesDialog(frm) {
         args: {
           start_date: values.start_date,
           end_date: values.end_date,
-          company: frm.doc.company,
         },
         freeze: true,
         freeze_message: __("Searching eTIMS Sales Ledger..."),
         callback(response) {
           dialog.hide();
+          const payload = response.message || {};
           showRev1WithoutCreditNotesResults(
-            response.message || [],
+            payload.entries || [],
+            payload.summary || {},
             values.start_date,
             values.end_date,
           );
@@ -500,10 +501,21 @@ function showRev1WithoutCreditNotesDialog(frm) {
   dialog.show();
 }
 
-function showRev1WithoutCreditNotesResults(entries, start_date, end_date) {
+function showRev1WithoutCreditNotesResults(
+  entries,
+  summary,
+  start_date,
+  end_date,
+) {
   const escape = frappe.utils.escape_html;
   const formatCurrency = (amount) =>
     format_currency(amount || 0, frappe.boot.sysdefaults.currency);
+  const revInRange = summary.rev_in_range || 0;
+  const alreadyCredited = summary.already_credited || 0;
+  const withoutCreditNote =
+    summary.without_credit_note != null
+      ? summary.without_credit_note
+      : entries.length;
 
   const rows = (entries || [])
     .map((entry) => {
@@ -550,10 +562,12 @@ function showRev1WithoutCreditNotesResults(entries, start_date, end_date) {
             <div><strong>${__("SCU Receipt Date")}:</strong> ${escape(
               frappe.datetime.str_to_user(start_date),
             )} → ${escape(frappe.datetime.str_to_user(end_date))}</div>
-            <div><strong>${__("Found")}:</strong> ${entries.length}</div>
+            <div><strong>${__("REV Sales Invoices in range")}:</strong> ${revInRange}</div>
+            <div><strong>${__("Already have Credit Note (etims_invoice link)")}:</strong> ${alreadyCredited}</div>
+            <div><strong>${__("Still need Credit Note")}:</strong> ${withoutCreditNote}</div>
             <p style="margin-top: 8px; color: var(--text-muted);">
               ${__(
-                "These are revised Sales Invoice ledger entries with no Credit Note linked through etims_invoice.",
+                "Date filter used the invoice SCU Receipt Date only. Credit Notes are matched by etims_invoice link, regardless of Credit Note date.",
               )}
             </p>
           </div>
@@ -576,7 +590,7 @@ function showRev1WithoutCreditNotesResults(entries, start_date, end_date) {
                    </table>
                  </div>`
               : `<div class="text-muted">${__(
-                  "No matching REV1 Sales Invoice ledger entries without credit notes were found.",
+                  "No Sales Invoice ledger entries with REV reference and SCU Receipt Date in this range are missing a Credit Note etims_invoice link.",
                 )}</div>`
           }
         `,
