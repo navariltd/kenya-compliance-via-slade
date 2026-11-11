@@ -1,7 +1,9 @@
 import json
+import re
 
 import frappe
 from frappe.model.document import Document
+from frappe.utils import getdate
 
 from ...doctype.doctype_names_mapping import (
     ORGANISATION_MAPPING_DOCTYPE_NAME,
@@ -11,6 +13,8 @@ from ...utils import (
     reset_auth_password,
     update_navari_settings_with_token,
 )
+
+REV_REFERENCE_PATTERN = re.compile(r"REV\d+", re.IGNORECASE)
 
 
 class NavariKRAeTimsSettings(Document):
@@ -121,6 +125,68 @@ class NavariKRAeTimsSettings(Document):
                     frappe.get_traceback(),
                     f"Failed to delete Scheduled Job Type {job}",
                 )
+
+
+@frappe.whitelist()
+def find_rev1_invoices_without_credit_notes(start_date, end_date, company=None):
+    """Return Sales Invoice eTIMS ledger entries with REV references and no credit note.
+
+    Looks for Sales Invoice ledger rows whose SCU Receipt Date falls in the given
+    range, whose reference_number contains a revision suffix such as REV1, and that
+    have no Credit Note ledger entry linked via etims_invoice.
+    """
+    if not start_date or not end_date:
+        frappe.throw("Start Date and End Date are required.")
+
+    start_date = getdate(start_date)
+    end_date = getdate(end_date)
+    if start_date > end_date:
+        frappe.throw("Start Date cannot be after End Date.")
+
+    filters = {
+        "type": "Sales Invoice",
+        "scu_receipt_date": ["between", [start_date, end_date]],
+        "reference_number": ["like", "%REV%"],
+    }
+    if company:
+        filters["company"] = company
+
+    entries = frappe.get_all(
+        "eTIMS Sales Ledger Entry",
+        filters=filters,
+        fields=[
+            "name",
+            "reference_number",
+            "scu_invoice_number",
+            "scu_receipt_date",
+            "sales_invoice",
+            "total_gross_amount",
+            "customer_name",
+            "company",
+        ],
+        order_by="scu_receipt_date asc, name asc",
+    )
+
+    rev_entries = [
+        entry
+        for entry in entries
+        if REV_REFERENCE_PATTERN.search(entry.reference_number or "")
+    ]
+    if not rev_entries:
+        return []
+
+    credited_names = set(
+        frappe.get_all(
+            "eTIMS Sales Ledger Entry",
+            filters={
+                "type": "Credit Note",
+                "etims_invoice": ["in", [entry.name for entry in rev_entries]],
+            },
+            pluck="etims_invoice",
+        )
+    )
+
+    return [entry for entry in rev_entries if entry.name not in credited_names]
 
 
 @frappe.whitelist()

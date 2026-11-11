@@ -282,6 +282,14 @@ frappe.ui.form.on("Navari KRA eTims Settings", {
       },
       __("eTims Actions"),
     );
+
+    frm.add_custom_button(
+      __("Find REV1 Without Credit Notes"),
+      function () {
+        showRev1WithoutCreditNotesDialog(frm);
+      },
+      __("eTims Actions"),
+    );
     frappe.call({
       method:
         "kenya_compliance_via_slade.kenya_compliance_via_slade.utils.check_hanging_custom_fields",
@@ -436,6 +444,152 @@ frappe.ui.form.on("Navari KRA eTims Settings", {
     }
   },
 });
+
+function showRev1WithoutCreditNotesDialog(frm) {
+  const dialog = new frappe.ui.Dialog({
+    title: __("Find REV1 Invoices Without Credit Notes"),
+    fields: [
+      {
+        fieldtype: "HTML",
+        fieldname: "help_html",
+        options: `<p style="margin-bottom: 12px; color: var(--text-muted);">
+          ${__(
+            "Lists Sales Invoice eTIMS Sales Ledger entries whose SCU Receipt Date is in range, reference number has a revision such as REV1, and no Credit Note is linked via etims_invoice.",
+          )}
+        </p>`,
+      },
+      {
+        label: __("Start Date"),
+        fieldname: "start_date",
+        fieldtype: "Date",
+        reqd: 1,
+        default: frappe.datetime.add_months(frappe.datetime.get_today(), -1),
+      },
+      {
+        label: __("End Date"),
+        fieldname: "end_date",
+        fieldtype: "Date",
+        reqd: 1,
+        default: frappe.datetime.get_today(),
+      },
+    ],
+    primary_action_label: __("Find"),
+    primary_action(values) {
+      frappe.call({
+        method:
+          "kenya_compliance_via_slade.kenya_compliance_via_slade.doctype.navari_kra_etims_settings.navari_kra_etims_settings.find_rev1_invoices_without_credit_notes",
+        args: {
+          start_date: values.start_date,
+          end_date: values.end_date,
+          company: frm.doc.company,
+        },
+        freeze: true,
+        freeze_message: __("Searching eTIMS Sales Ledger..."),
+        callback(response) {
+          dialog.hide();
+          showRev1WithoutCreditNotesResults(
+            response.message || [],
+            values.start_date,
+            values.end_date,
+          );
+        },
+      });
+    },
+  });
+
+  dialog.show();
+}
+
+function showRev1WithoutCreditNotesResults(entries, start_date, end_date) {
+  const escape = frappe.utils.escape_html;
+  const formatCurrency = (amount) =>
+    format_currency(amount || 0, frappe.boot.sysdefaults.currency);
+
+  const rows = (entries || [])
+    .map((entry) => {
+      const receiptDate = entry.scu_receipt_date
+        ? frappe.datetime.str_to_user(entry.scu_receipt_date)
+        : "—";
+      const ledgerLink = frappe.utils.get_form_link(
+        "eTIMS Sales Ledger Entry",
+        entry.name,
+        true,
+        escape(entry.name),
+      );
+      const invoiceLink = entry.sales_invoice
+        ? frappe.utils.get_form_link(
+            "Sales Invoice",
+            entry.sales_invoice,
+            true,
+            escape(entry.sales_invoice),
+          )
+        : "—";
+
+      return `
+        <tr>
+          <td>${ledgerLink}</td>
+          <td>${escape(entry.reference_number || "")}</td>
+          <td>${escape(entry.scu_invoice_number || "—")}</td>
+          <td>${escape(receiptDate)}</td>
+          <td>${invoiceLink}</td>
+          <td>${escape(entry.customer_name || "—")}</td>
+          <td style="text-align: right;">${escape(formatCurrency(entry.total_gross_amount))}</td>
+        </tr>`;
+    })
+    .join("");
+
+  const resultsDialog = new frappe.ui.Dialog({
+    title: __("REV1 Without Credit Notes"),
+    size: "extra-large",
+    fields: [
+      {
+        fieldtype: "HTML",
+        fieldname: "results_html",
+        options: `
+          <div style="margin-bottom: 12px;">
+            <div><strong>${__("SCU Receipt Date")}:</strong> ${escape(
+              frappe.datetime.str_to_user(start_date),
+            )} → ${escape(frappe.datetime.str_to_user(end_date))}</div>
+            <div><strong>${__("Found")}:</strong> ${entries.length}</div>
+            <p style="margin-top: 8px; color: var(--text-muted);">
+              ${__(
+                "These are revised Sales Invoice ledger entries with no Credit Note linked through etims_invoice.",
+              )}
+            </p>
+          </div>
+          ${
+            entries.length
+              ? `<div style="max-height: 420px; overflow: auto;">
+                   <table class="table table-bordered table-sm">
+                     <thead>
+                       <tr>
+                         <th>${__("Ledger Entry")}</th>
+                         <th>${__("Reference Number")}</th>
+                         <th>${__("eTIMS Invoice")}</th>
+                         <th>${__("SCU Receipt Date")}</th>
+                         <th>${__("Sales Invoice")}</th>
+                         <th>${__("Customer")}</th>
+                         <th>${__("Gross Amount")}</th>
+                       </tr>
+                     </thead>
+                     <tbody>${rows}</tbody>
+                   </table>
+                 </div>`
+              : `<div class="text-muted">${__(
+                  "No matching REV1 Sales Invoice ledger entries without credit notes were found.",
+                )}</div>`
+          }
+        `,
+      },
+    ],
+    primary_action_label: __("Close"),
+    primary_action() {
+      resultsDialog.hide();
+    },
+  });
+
+  resultsDialog.show();
+}
 
 function showClusterMatchingModal(clusterData, form) {
   let tableData = clusterData.map((cluster) => {
