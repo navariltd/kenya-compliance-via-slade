@@ -454,7 +454,8 @@ def build_invoice_payload(invoice: Document, settings_name: str) -> dict:
         "document_name": invoice.name,
         "reference_number": reference_number,
         "sales_type": "credit",
-        "customer_pin": frappe.get_value("Customer", invoice.customer, "tax_id")
+        "customer_pin": invoice.tax_id
+        or frappe.get_value("Customer", invoice.customer, "tax_id")
         or None,
         "partner_name": frappe.get_value("Customer", invoice.customer, "customer_name")
         or None,
